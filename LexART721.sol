@@ -7,10 +7,10 @@ DEAR MSG.SENDER(S):
 //// This is code, don't construed this as legal advice or replacement for professional counsel.
 ///// STEAL THIS C0D3SL4W
 
-~presented by LexART DAO
+~presented by Mol LeA
 */
 
-pragma solidity ^0.5.14;
+pragma solidity ^0.5.17;
 /*
  * @dev Provides information about the current execution context, including the
  * sender of the transaction and its data. While these are generally available
@@ -945,7 +945,7 @@ contract ERC721Metadata is Context, ERC165, ERC721, IERC721Metadata {
     }
 }
 
-contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
+contract LexART721 is ERC721, ERC721Metadata, Ownable {
     using SafeMath for uint256;
     address payable public lexDAO;
     address public lexARTSummonerContractAddress;
@@ -1006,7 +1006,7 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
         string memory artworkMetadata,
         string memory certificateHash) payable public onlyOwner {
 
-        uint createArtCost = lexARTFactorySummoner(lexARTSummonerContractAddress).getFactoryMintingFee();
+        uint createArtCost = lexArt721Factory(lexARTSummonerContractAddress).getFactoryMintingFee();
         require(msg.value == createArtCost);
 
         address(lexDAO).transfer(msg.value);
@@ -1041,10 +1041,6 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].ownerAddress = newOwner;
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].royalties = decayRoyalties(ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 2].royalties);
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].gifted = 1;
-    }
-
-    function importOwners() private view returns (address[] memory) {
-
     }
 
     function decayRoyalties(uint8 _royalties) internal returns (uint8) {
@@ -1146,37 +1142,37 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
     }
 }
 
-contract lexARTFactorySummoner is Ownable {
+contract lexArt721Factory is Ownable {
 
     //***** Factory *****//
-    uint256 public factoryDeploymentFee;
-    uint256 public factoryMintingFee;
+    uint256 public lexArtDeploymentFee;
+    uint256 public lexArtIdMintingFee;
 
     //
     address payable public lexDAO = 0x4744cda32bE7b3e75b9334001da9ED21789d4c0d;
     address payable public mol = 0xFB12B6A543d986A1938d2b3C7d05848D8913AcC4;
 
     constructor() public {
-        factoryDeploymentFee = 0;
-        factoryMintingFee = 0;
+        lexArtDeploymentFee = 0;
+        lexArtIdMintingFee = 0;
     }
 
     function whatIsMyAddress() internal view returns (address myAddress) {
         myAddress = address(this);
     }
 
-    function createFactory(string memory name, string memory symbol) payable public returns (address) {
-        require(msg.value == factoryDeploymentFee);
+    function mintLexArt721(string memory name, string memory symbol) payable public returns (address) {
+        require(msg.value == lexArtDeploymentFee);
         address summonerAddress = whatIsMyAddress();
         address(lexDAO).transfer(msg.value);
 
-        LexARTFactory LA = new LexARTFactory(name, symbol, summonerAddress, mol, lexDAO);
+        LexART721 LA = new LexART721(name, symbol, summonerAddress, mol, lexDAO);
         LA.transferOwnership(mol);
         return address(LA);
     }
 
-    function getFactoryMintingFee() public view returns (uint256 _factoryMintingFee) {
-        _factoryMintingFee = factoryMintingFee;
+    function getFactoryMintingFee() public view returns (uint256) {
+        return lexArtIdMintingFee;
     }
 
     /***************
@@ -1187,9 +1183,9 @@ contract lexARTFactorySummoner is Ownable {
         _;
     }
 
-    function updateFactoryFees(uint _factoryDeploymentFee, uint _factoryMintingFee) public onlyLexDAO {
-        factoryDeploymentFee = _factoryDeploymentFee;
-        factoryMintingFee = _factoryMintingFee;
+    function updateFactoryFees(uint _lexArtDeploymentFee, uint _lexArtIdMintingFee) public onlyLexDAO {
+        lexArtDeploymentFee = _lexArtDeploymentFee;
+        lexArtIdMintingFee = _lexArtIdMintingFee;
     }
 
     function updateLexDAO(address payable _lexDAO) public onlyLexDAO {
