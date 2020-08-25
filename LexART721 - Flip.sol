@@ -947,31 +947,38 @@ contract ERC721Metadata is Context, ERC165, ERC721, IERC721Metadata {
 
 contract LexART721 is ERC721, ERC721Metadata, Ownable {
     using SafeMath for uint256;
+
+    //***** DAO Setup *****//
     address payable public lexDAO;
     address public lexARTSummonerContractAddress;
     address payable public factoryDeployer;
 
+    //***** NFT Setup *****//
     uint8 public startingRoyalties = 10; // percentage of royalty retained by minter-owner
     uint256 public artCount = 0;
 
     //***** Parties (Owner) *****//
     struct Owner {
         address payable ownerAddress;
+        uint256 purchasePrice;
         uint8 royalties;
         uint256 royaltiesReceived;
         uint8 gifted; // 1 = gifted (gifted owner retains royalties), 0 = not gifted
     }
 
-    // An index of owners and their respective royalties % data per token Id
-    mapping(uint256 => mapping(uint256 => Owner)) public ownerIndex; // ownerIndex[tokenId][Owner struct]
-    // A mapping created to address the issue with iterating a mapping
-    mapping(uint256 => address payable[]) public ownersPerTokenId; // ownersPerTokenId[tokenId][owner address]
+    // An index of owners and their respective royalties % data per token Id, e.g., ownerIndex[tokenId][Owner struct]
+    mapping(uint256 => mapping(uint256 => Owner)) public ownerIndex;
+    // A mapping created to address the issue with iterating a mapping, e.g., ownersPerTokenId[tokenId][owner address]
+    mapping(uint256 => address payable[]) public ownersPerTokenId;
 
     //***** Parties (Buyer) *****//
     struct Buyer {
         address payable buyerAddress;
         uint256 transactionValue;
         uint8 ownerOffered; // 1 = offer active, 0 = offer inactive
+        uint256 flipMultiple;
+        uint8 isFlipRandomized; // 1 = flip multiple is randomized, 0 = flip multiple not randomized
+        uint8 isFlipEnabled; // 1 = flip multiple enabled, 0 = flip multiple not enabled
     }
 
     // An index of buyer per token Id. For simplicity it is 1 to 1, and not multiple to 1 token Id.
@@ -1043,8 +1050,36 @@ contract LexART721 is ERC721, ERC721Metadata, Ownable {
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].gifted = 1;
     }
 
-    function decayRoyalties(uint8 _royalties) internal returns (uint8) {
+    function decayRoyalties(uint8 _royalties) private pure returns (uint8) {
         return _royalties - 1;
+    }
+
+    function toggleFlipFunctions(uint256 tokenId, uint8 _isFlipEnabled, uint8 _isFlipRandomized, uint256 _flipMultiple) public {
+        require(msg.sender == factoryDeployer, "You are not the factory deployer!");
+        require(_flipMultiple > 0, "Flip multiple not be 0!");
+
+        // Factory deployer can only randomize flip for secondary sales
+        if (ownersPerTokenId[tokenId].length > 1) {
+            buyerPerTokenId[tokenId].isFlipRandomized = _isFlipRandomized;
+            buyerPerTokenId[tokenId].isFlipEnabled = _isFlipEnabled;
+            buyerPerTokenId[tokenId].flipMultiple = _flipMultiple;
+        } else {
+            buyerPerTokenId[tokenId].isFlipRandomized = 0;
+            buyerPerTokenId[tokenId].isFlipEnabled = 0;
+            buyerPerTokenId[tokenId].flipMultiple = 1;
+        }
+    }
+
+    function calculateTransactionValue(uint256 _tokenId, uint256 _transactionValue) private returns (uint256) {
+        if (buyerPerTokenId[_tokenId].isFlipRandomized == 1 && buyerPerTokenId[_tokenId].isFlipEnabled == 1) {
+            uint256 pseudoRandom = block.timestamp;
+            buyerPerTokenId[_tokenId].flipMultiple = pseudoRandom % 9 + 1;
+            return (ownerIndex[_tokenId][ownersPerTokenId[_tokenId].length - 1].purchasePrice).mul(buyerPerTokenId[_tokenId].flipMultiple);
+        } else if (buyerPerTokenId[_tokenId].isFlipRandomized == 0 && buyerPerTokenId[_tokenId].isFlipEnabled == 1) {
+            return (ownerIndex[_tokenId][ownersPerTokenId[_tokenId].length - 1].purchasePrice).mul(buyerPerTokenId[_tokenId].flipMultiple);
+        } else {
+            return _transactionValue;
+        }
     }
 
     // owner makes offer by assigning buyer
@@ -1057,7 +1092,7 @@ contract LexART721 is ERC721, ERC721Metadata, Ownable {
         require(_buyer != ownersPerTokenId[tokenId][currentOwnerPerTokenId], "Owner cannot be a buyer!");
         require(_transactionValue != 0, "Transaction value cannot be 0");
 
-        buyerPerTokenId[tokenId].transactionValue = _transactionValue;
+        buyerPerTokenId[tokenId].transactionValue = calculateTransactionValue(tokenId, _transactionValue);
         buyerPerTokenId[tokenId].buyerAddress = _buyer;
         buyerPerTokenId[tokenId].ownerOffered = 1;
     }
@@ -1096,6 +1131,7 @@ contract LexART721 is ERC721, ERC721Metadata, Ownable {
         // Add new owner to owners, ownersPerTokenId & ownerIndex, mapping
         ownersPerTokenId[tokenId].push(buyerPerTokenId[tokenId].buyerAddress); // Increments owner array for selected tokenId
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].ownerAddress = msg.sender;
+        ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].purchasePrice = msg.value;
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].royalties = decayRoyalties(ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 2].royalties);
         ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].gifted = 0;
 
