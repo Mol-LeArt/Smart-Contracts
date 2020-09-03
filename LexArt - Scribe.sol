@@ -7,7 +7,7 @@ DEAR MSG.SENDER(S):
 //// This is code, don't construed this as legal advice or replacement for professional counsel.
 ///// STEAL THIS C0D3SL4W
 
-~presented by Mol LeArt
+~ presented by Mol LeArt ~ credit to Conlan's Scribe ~
 */
 
 pragma solidity ^0.5.17;
@@ -972,10 +972,13 @@ library Utilities {
 	}
 }
 
-contract lexArtWrapper {
+contract MolWrapper is Ownable {
     using SafeMath for uint256;
 
-    uint256 public nftCount;
+    uint256 public nftCount; // Number of NFTs wrapped
+    address public mol = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
+    address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8; // Mol LeArt on xDAI
+    uint256 public molFee = 5; // Mol takes 5% from secondary sales
 
     struct NFT {
         address tokenAddress;
@@ -1002,7 +1005,6 @@ contract lexArtWrapper {
 	mapping (bytes => Buyer) public buyers;
 
     function wrapNFT(address tokenAddress, uint256 tokenId, uint8 startingRoyalties) public {
-		// check that the message sender owns the token at _tokenAddress
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to wrap!");
 
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
@@ -1021,7 +1023,6 @@ contract lexArtWrapper {
         return _royalties - 1;
     }
 
-    // owner makes offer by assigning buyer
     function makeOffer(address tokenAddress, uint256 tokenId, address payable buyer, uint256 transactionValue) public {
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to make offer!");
         require(nftCount > 0, "Wrap an NFT first!");
@@ -1032,46 +1033,50 @@ contract lexArtWrapper {
         buyers[tokenKey].buyerAddress = buyer;
         buyers[tokenKey].transactionValue = transactionValue;
         buyers[tokenKey].ownerOffered = 1;
-
-        // ERC721(tokenAddress).approve(address(this), tokenId);
     }
 
-    // distribute royalties
     function distributeRoyalties(bytes memory _tokenKey, uint256 _transactionValue) internal returns (uint256) {
-        uint256 totalPayout = _transactionValue.div(100);
         uint256 royaltyPayout;
 
-        // royalties distribution
         for (uint256 i = 0; i < owners[_tokenKey].length; i++) {
             uint256 eachPayout;
 
-            eachPayout = totalPayout.mul(owners[_tokenKey][i].royalties);
+            eachPayout = _transactionValue.mul(owners[_tokenKey][i].royalties);
+            eachPayout = eachPayout.div(100);
+
             royaltyPayout += eachPayout;
 
-            owners[_tokenKey][i].ownerAddress.transfer(eachPayout);
+            (bool success, ) = owners[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
+            require(success, "transfer failed");
             owners[_tokenKey][i].royaltiesReceived += eachPayout;
         }
         return royaltyPayout;
     }
 
-    // buyer accepts offer
     function acceptOffer(address tokenAddress, uint256 tokenId) public payable {
-        
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 
         require(msg.sender == buyers[tokenKey].buyerAddress, "You are not the buyer to accept owner's offer!");
         require(msg.value == buyers[tokenKey].transactionValue, "Incorrect payment amount!");
         require(buyers[tokenKey].ownerOffered == 1, "Owner has not made any offer!");
 
-
         // Calculate royalty payout
         uint256 royaltyPayout = distributeRoyalties(tokenKey, buyers[tokenKey].transactionValue);
 
-        // Owner receives transactionValue less royaltyPayout
-        owners[tokenKey][owners[tokenKey].length - 1].ownerAddress.transfer(buyers[tokenKey].transactionValue - royaltyPayout);
+        // Calculate and transfer payout to Mol
+        uint256 molPayout = (molFee * buyers[tokenKey].transactionValue).div(100);
+        (bool success, ) = molBank.call.value(molPayout)("");
+        require(success, "transfer failed");
+
+        // Owner receives purchase price less payouts to Mol and previous owners via royalties
+        uint256 buyersCut = buyers[tokenKey].transactionValue.sub(molPayout).sub(royaltyPayout);
+        (success, ) = owners[tokenKey][owners[tokenKey].length - 1].ownerAddress.call.value(buyersCut)("");
+        require(success, "transfer failed");
+
+        // Owner transfers NFT to buyer
         ERC721(tokenAddress).transferFrom(owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, buyers[tokenKey].buyerAddress, tokenId);
 
-        // Add new owner to owners mapping
+        // Decay royalties and add new owner to owners mapping
         uint8 newDecayedRoyalties = decayRoyalties(owners[tokenKey][owners[tokenKey].length - 1].royalties);
         owners[tokenKey].push(Owner(msg.sender, newDecayedRoyalties, 0, 0));
 
@@ -1086,4 +1091,24 @@ contract lexArtWrapper {
 	function getTokenKey(address tokenAddress, uint256 tokenId) public pure returns (bytes memory) {
 		return Utilities.concat(Utilities.toBytes(tokenAddress), Utilities.toBytes(tokenId));
 	}
+
+	/***************
+    Mol LeArt Functions
+    ***************/
+    modifier onlyMol () {
+        require(_msgSender() == mol, "caller not lexDAO");
+        _;
+    }
+
+    function updateMolFees(uint8 _molFee) public onlyMol {
+        molFee = _molFee;
+    }
+
+    function updateMolBank(address payable _molBank) public onlyMol {
+        molBank = _molBank;
+    }
+
+    function updateMol(address payable _mol) public onlyMol {
+        mol = _mol;
+    }
 }
