@@ -1004,6 +1004,10 @@ contract MolWrapper is Ownable {
 	mapping (bytes => Owner[]) public owners;
 	mapping (bytes => Buyer) public buyers;
 
+    event molFeesUpdated(uint256 indexed _molFees);
+    event molBankUpdated(address indexed _molBank);
+    event molUpdated(address indexed _mol);
+
     function wrapNFT(address tokenAddress, uint256 tokenId, uint8 startingRoyalties) public {
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to wrap!");
 
@@ -1101,15 +1105,22 @@ contract MolWrapper is Ownable {
         _;
     }
 
-    function updateMolFees(uint8 _molFee) public onlyMol {
+    function updateMolFees(uint256 _molFee) public onlyMol {
         molFee = _molFee;
+
+        emit molFeesUpdated(molFee);
     }
 
     function updateMolBank(address payable _molBank) public onlyMol {
         molBank = _molBank;
+
+        emit molBankUpdated(molBank);
+
     }
 
     function updateMol(address payable _mol) public onlyMol {
         mol = _mol;
+
+        emit molUpdated(mol);
     }
 }
