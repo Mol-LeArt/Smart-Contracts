@@ -1008,7 +1008,7 @@ contract MolWrapper is Ownable {
     event molBankUpdated(address indexed _molBank);
     event molUpdated(address indexed _mol);
 
-    function wrapNFT(address tokenAddress, uint256 tokenId, uint8 startingRoyalties) public {
+    function wrapNFT(address tokenAddress, uint256 tokenId, address payable communityAddress, uint8 startingRoyalties) public {
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to wrap!");
 
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
@@ -1018,7 +1018,7 @@ contract MolWrapper is Ownable {
         NFTs[tokenKey].currentOwner = msg.sender;
         NFTs[tokenKey].startingRoyalties = startingRoyalties;
 
-        owners[tokenKey].push(Owner(0x21316E6A4F0Af45E5F1503984E83B10C53b177D8, startingRoyalties, 0, 0)); // Hackatao Eth Address
+        owners[tokenKey].push(Owner(communityAddress, startingRoyalties, 0, 0)); // Hackatao Eth Address
         owners[tokenKey].push(Owner(msg.sender, startingRoyalties - 1, 0, 0));
 
         nftCount++;
