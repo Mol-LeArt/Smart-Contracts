@@ -972,7 +972,7 @@ library Utilities {
 	}
 }
 
-contract MolScribe is Ownable {
+contract MolWrapper is Ownable {
     using SafeMath for uint256;
 
     uint256 public nftCount; // Number of NFTs wrapped
@@ -1025,7 +1025,7 @@ contract MolScribe is Ownable {
         NFTs[tokenKey].currentOwner = communityAddress;
     }
 
-    function scribeNFT(address tokenAddress, uint256 tokenId, uint8 startingRoyalties) public {
+    function scribeNFT(address tokenAddress, uint256 tokenId, address payable communityAddress, uint8 startingRoyalties) public {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to scribe!");
         require(NFTs[tokenKey].currentOwner != msg.sender, "NFT already scribed!");
@@ -1035,7 +1035,8 @@ contract MolScribe is Ownable {
         NFTs[tokenKey].currentOwner = msg.sender;
         NFTs[tokenKey].startingRoyalties = startingRoyalties;
 
-        owners[tokenKey].push(Owner(msg.sender, startingRoyalties, 0, 0));
+        owners[tokenKey].push(Owner(communityAddress, startingRoyalties, 0, 0)); // Hackatao Eth Address
+        owners[tokenKey].push(Owner(msg.sender, startingRoyalties - 1, 0, 0));
 
         nftCount++;
 	}
@@ -1125,16 +1126,20 @@ contract MolScribe is Ownable {
 
     function updateMolFees(uint256 _molFee) public onlyMol {
         molFee = _molFee;
+
         emit molFeesUpdated(molFee);
     }
 
     function updateMolBank(address payable _molBank) public onlyMol {
         molBank = _molBank;
+
         emit molBankUpdated(molBank);
+
     }
 
     function updateMol(address payable _mol) public onlyMol {
         mol = _mol;
+
         emit molUpdated(mol);
     }
 }

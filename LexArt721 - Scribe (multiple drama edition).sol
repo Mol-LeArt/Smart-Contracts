@@ -1008,17 +1008,38 @@ contract MolWrapper is Ownable {
     event molBankUpdated(address indexed _molBank);
     event molUpdated(address indexed _mol);
 
-    function wrapNFT(address tokenAddress, uint256 tokenId, address payable communityAddress, uint8 startingRoyalties) public {
-		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to wrap!");
-
+    function giftLexART(address tokenAddress, uint256 tokenId, address payable communityAddress) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
+
+        require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to make offer!");
+
+        // Owner transfers NFT to buyer
+        ERC721(tokenAddress).transferFrom(owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, communityAddress, tokenId);
+
+        // Decay royalties and add new owner to owners mapping
+        uint8 newDecayedRoyalties = decayRoyalties(owners[tokenKey][owners[tokenKey].length - 1].royalties);
+        owners[tokenKey].push(Owner(communityAddress, newDecayedRoyalties, 0, 0));
+        owners[tokenKey][owners[tokenKey].length - 1].gifted = 1;
+
+        // Update new owner to NFTs mapping
+        NFTs[tokenKey].currentOwner = communityAddress;
+    }
+
+    function scribeNFT(address tokenAddress, uint256 tokenId, address payable[] memory communityAddress, uint8 startingRoyalties) public {
+        bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
+		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to scribe!");
+        require(NFTs[tokenKey].currentOwner != msg.sender, "NFT already scribed!");
 
         NFTs[tokenKey].tokenAddress = tokenAddress;
         NFTs[tokenKey].tokenId = tokenId;
         NFTs[tokenKey].currentOwner = msg.sender;
         NFTs[tokenKey].startingRoyalties = startingRoyalties;
 
-        owners[tokenKey].push(Owner(communityAddress, startingRoyalties, 0, 0)); // Hackatao Eth Address
+        for (uint256 i = 0; i < communityAddress.length; i++) {
+            owners[tokenKey].push(Owner(communityAddress[i], startingRoyalties, 0, 0));
+        }
+
+        // owners[tokenKey].push(Owner(communityAddress, startingRoyalties, 0, 0));
         owners[tokenKey].push(Owner(msg.sender, startingRoyalties - 1, 0, 0));
 
         nftCount++;
@@ -1034,6 +1055,8 @@ contract MolWrapper is Ownable {
 
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
         require(NFTs[tokenKey].tokenAddress == tokenAddress && NFTs[tokenKey].tokenId == tokenId, "This NFT has not been wrapped!");
+        require(buyer != owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, "Owner cannot be a buyer!");
+        require(transactionValue != 0, "Transaction value cannot be 0!");
 
         buyers[tokenKey].buyerAddress = buyer;
         buyers[tokenKey].transactionValue = transactionValue;
