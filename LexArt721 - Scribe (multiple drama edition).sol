@@ -972,7 +972,7 @@ library Utilities {
 	}
 }
 
-contract MolWrapper is Ownable {
+contract MolScribe {
     using SafeMath for uint256;
 
     uint256 public nftCount; // Number of NFTs wrapped
@@ -1001,25 +1001,25 @@ contract MolWrapper is Ownable {
     }
 
     mapping(bytes => NFT) public NFTs;
-	mapping (bytes => Owner[]) public owners;
+	mapping (bytes => Owner[]) public ownersPerNFT;
 	mapping (bytes => Buyer) public buyers;
 
     event molFeesUpdated(uint256 indexed _molFees);
     event molBankUpdated(address indexed _molBank);
     event molUpdated(address indexed _mol);
 
-    function giftLexART(address tokenAddress, uint256 tokenId, address payable communityAddress) public payable {
+    function giftNFT(address tokenAddress, uint256 tokenId, address payable communityAddress) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 
         require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to make offer!");
 
         // Owner transfers NFT to buyer
-        ERC721(tokenAddress).transferFrom(owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, communityAddress, tokenId);
+        ERC721(tokenAddress).transferFrom(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, communityAddress, tokenId);
 
         // Decay royalties and add new owner to owners mapping
-        uint8 newDecayedRoyalties = decayRoyalties(owners[tokenKey][owners[tokenKey].length - 1].royalties);
-        owners[tokenKey].push(Owner(communityAddress, newDecayedRoyalties, 0, 0));
-        owners[tokenKey][owners[tokenKey].length - 1].gifted = 1;
+        uint8 newDecayedRoyalties = decayRoyalties(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties);
+        ownersPerNFT[tokenKey].push(Owner(communityAddress, newDecayedRoyalties, 0, 0));
+        ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].gifted = 1;
 
         // Update new owner to NFTs mapping
         NFTs[tokenKey].currentOwner = communityAddress;
@@ -1036,11 +1036,11 @@ contract MolWrapper is Ownable {
         NFTs[tokenKey].startingRoyalties = startingRoyalties;
 
         for (uint256 i = 0; i < communityAddress.length; i++) {
-            owners[tokenKey].push(Owner(communityAddress[i], startingRoyalties, 0, 0));
+            ownersPerNFT[tokenKey].push(Owner(communityAddress[i], startingRoyalties, 0, 0));
         }
 
         // owners[tokenKey].push(Owner(communityAddress, startingRoyalties, 0, 0));
-        owners[tokenKey].push(Owner(msg.sender, startingRoyalties - 1, 0, 0));
+        ownersPerNFT[tokenKey].push(Owner(msg.sender, startingRoyalties - 1, 0, 0));
 
         nftCount++;
 	}
@@ -1055,7 +1055,7 @@ contract MolWrapper is Ownable {
 
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
         require(NFTs[tokenKey].tokenAddress == tokenAddress && NFTs[tokenKey].tokenId == tokenId, "This NFT has not been wrapped!");
-        require(buyer != owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, "Owner cannot be a buyer!");
+        require(buyer != ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, "Owner cannot be a buyer!");
         require(transactionValue != 0, "Transaction value cannot be 0!");
 
         buyers[tokenKey].buyerAddress = buyer;
@@ -1066,17 +1066,17 @@ contract MolWrapper is Ownable {
     function distributeRoyalties(bytes memory _tokenKey, uint256 _transactionValue) internal returns (uint256) {
         uint256 royaltyPayout;
 
-        for (uint256 i = 0; i < owners[_tokenKey].length; i++) {
+        for (uint256 i = 0; i < ownersPerNFT[_tokenKey].length; i++) {
             uint256 eachPayout;
 
-            eachPayout = _transactionValue.mul(owners[_tokenKey][i].royalties);
+            eachPayout = _transactionValue.mul(ownersPerNFT[_tokenKey][i].royalties);
             eachPayout = eachPayout.div(100);
 
             royaltyPayout += eachPayout;
 
-            (bool success, ) = owners[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
+            (bool success, ) = ownersPerNFT[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
             require(success, "transfer failed");
-            owners[_tokenKey][i].royaltiesReceived += eachPayout;
+            ownersPerNFT[_tokenKey][i].royaltiesReceived += eachPayout;
         }
         return royaltyPayout;
     }
@@ -1098,15 +1098,15 @@ contract MolWrapper is Ownable {
 
         // Owner receives purchase price less payouts to Mol and previous owners via royalties
         uint256 buyersCut = buyers[tokenKey].transactionValue.sub(molPayout).sub(royaltyPayout);
-        (success, ) = owners[tokenKey][owners[tokenKey].length - 1].ownerAddress.call.value(buyersCut)("");
+        (success, ) = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress.call.value(buyersCut)("");
         require(success, "transfer failed");
 
         // Owner transfers NFT to buyer
-        ERC721(tokenAddress).transferFrom(owners[tokenKey][owners[tokenKey].length - 1].ownerAddress, buyers[tokenKey].buyerAddress, tokenId);
+        ERC721(tokenAddress).transferFrom(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, buyers[tokenKey].buyerAddress, tokenId);
 
         // Decay royalties and add new owner to owners mapping
-        uint8 newDecayedRoyalties = decayRoyalties(owners[tokenKey][owners[tokenKey].length - 1].royalties);
-        owners[tokenKey].push(Owner(msg.sender, newDecayedRoyalties, 0, 0));
+        uint8 newDecayedRoyalties = decayRoyalties(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties);
+        ownersPerNFT[tokenKey].push(Owner(msg.sender, newDecayedRoyalties, 0, 0));
 
         // Complete owner's offer
         buyers[tokenKey].ownerOffered = 0;
@@ -1124,7 +1124,7 @@ contract MolWrapper is Ownable {
     Mol LeArt Functions
     ***************/
     modifier onlyMol () {
-        require(_msgSender() == mol, "caller not lexDAO");
+        require(msg.sender == mol, "caller not lexDAO");
         _;
     }
 
