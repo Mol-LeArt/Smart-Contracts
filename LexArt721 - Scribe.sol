@@ -982,132 +982,133 @@ contract MolScribe {
 
     struct NFT {
         address tokenAddress;
-        uint256 tokenId;
         address payable currentOwner;
-        uint8 startingRoyalties;
+        uint256 tokenId;
+        uint256 startingRoyalties;
     }
 
     struct Owner {
         address payable ownerAddress;
-        uint8 royalties;
-        uint256 royaltiesReceived;
         uint8 gifted; // 1 = gifted (gifted owner retains royalties), 0 = not gifted
+        uint256 royalties;
+        uint256 royaltiesReceived;
     }
 
-    struct Buyer {
-        address payable buyerAddress;
-        uint256 transactionValue;
-        uint8 ownerOffered; // 1 = offer active, 0 = offer inactive
+    struct Sale {
+        uint8 forSale; // 1 = sale active, 0 = sale inactive
+        uint256 ethPrice;
     }
 
     mapping(bytes => NFT) public NFTs;
 	mapping (bytes => Owner[]) public ownersPerNFT;
-	mapping (bytes => Buyer) public buyers;
+	mapping (bytes => Sale) public sale;
 
-    event molFeesUpdated(uint256 indexed _molFees);
-    event molBankUpdated(address indexed _molBank);
-    event molUpdated(address indexed _mol);
+    event Transfer(address indexed from, address indexed to, address indexed tokenAddress);
+    event UpdateSale(uint256 indexed ethPrice, address indexed tokenAddress, uint256 indexed tokenId, uint8 forSale);
+    event MolFeesUpdated(uint256 indexed _molFees);
+    event MolBankUpdated(address indexed _molBank);
+    event MolUpdated(address indexed _mol);
 
-    function giftNFT(address tokenAddress, uint256 tokenId, address payable communityAddress) public payable {
+    function gift(address tokenAddress, uint256 tokenId, address payable communityAddress) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 
         require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to make offer!");
+        require(communityAddress != msg.sender, "Cannot gift to oneself!");
 
         // Owner transfers NFT to buyer
         ERC721(tokenAddress).transferFrom(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, communityAddress, tokenId);
+        emit Transfer(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, communityAddress, tokenAddress);
 
         // Decay royalties and add new owner to owners mapping
-        uint8 newDecayedRoyalties = decayRoyalties(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties);
-        ownersPerNFT[tokenKey].push(Owner(communityAddress, newDecayedRoyalties, 0, 0));
+        uint256 updatedRoyalties = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties.sub(1);
+        ownersPerNFT[tokenKey].push(Owner(communityAddress, 0, updatedRoyalties, 0));
         ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].gifted = 1;
 
         // Update new owner to NFTs mapping
         NFTs[tokenKey].currentOwner = communityAddress;
     }
 
-    function scribeNFT(address tokenAddress, uint256 tokenId, uint8 startingRoyalties) public {
+    function scribe(address tokenAddress, uint256 tokenId, uint256 ethPrice, uint8 startingRoyalties, uint8 forSale) public {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to scribe!");
-        require(NFTs[tokenKey].currentOwner != msg.sender, "NFT already scribed!");
+		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "!owner");
+        require(NFTs[tokenKey].tokenAddress == address(0), "NFT already scribed!");
 
         NFTs[tokenKey].tokenAddress = tokenAddress;
         NFTs[tokenKey].tokenId = tokenId;
         NFTs[tokenKey].currentOwner = msg.sender;
         NFTs[tokenKey].startingRoyalties = startingRoyalties;
 
-        ownersPerNFT[tokenKey].push(Owner(msg.sender, startingRoyalties, 0, 0));
+        ownersPerNFT[tokenKey].push(Owner(msg.sender, 0, startingRoyalties, 0));
+
+        sale[tokenKey].ethPrice = ethPrice;
+        sale[tokenKey].forSale = forSale;
 
         nftCount++;
+
+        emit UpdateSale(ethPrice, tokenAddress, tokenId, forSale);
 	}
 
-    function decayRoyalties(uint8 _royalties) internal pure returns (uint8) {
-        return _royalties - 1;
-    }
-
-    function makeOffer(address tokenAddress, uint256 tokenId, address payable buyer, uint256 transactionValue) public {
-		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "Sender not authorized to make offer!");
-        require(nftCount > 0, "Wrap an NFT first!");
-
-        bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-        require(NFTs[tokenKey].tokenAddress == tokenAddress && NFTs[tokenKey].tokenId == tokenId, "This NFT has not been wrapped!");
-        require(buyer != ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, "Owner cannot be a buyer!");
-        require(transactionValue != 0, "Transaction value cannot be 0!");
-
-        buyers[tokenKey].buyerAddress = buyer;
-        buyers[tokenKey].transactionValue = transactionValue;
-        buyers[tokenKey].ownerOffered = 1;
-    }
-
-    function distributeRoyalties(bytes memory _tokenKey, uint256 _transactionValue) internal returns (uint256) {
+    function distributeRoyalties(bytes memory _tokenKey, uint256 _ethPrice) internal returns (uint256) {
         uint256 royaltyPayout;
 
         for (uint256 i = 0; i < ownersPerNFT[_tokenKey].length; i++) {
             uint256 eachPayout;
 
-            eachPayout = _transactionValue.mul(ownersPerNFT[_tokenKey][i].royalties);
+            eachPayout = _ethPrice.mul(ownersPerNFT[_tokenKey][i].royalties);
             eachPayout = eachPayout.div(100);
 
             royaltyPayout += eachPayout;
 
             (bool success, ) = ownersPerNFT[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
-            require(success, "transfer failed");
+            require(success, "!transfer");
             ownersPerNFT[_tokenKey][i].royaltiesReceived += eachPayout;
         }
         return royaltyPayout;
     }
 
-    function acceptOffer(address tokenAddress, uint256 tokenId) public payable {
+    function purchase(address tokenAddress, uint256 tokenId) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 
-        require(msg.sender == buyers[tokenKey].buyerAddress, "You are not the buyer to accept owner's offer!");
-        require(msg.value == buyers[tokenKey].transactionValue, "Incorrect payment amount!");
-        require(buyers[tokenKey].ownerOffered == 1, "Owner has not made any offer!");
+        require(NFTs[tokenKey].tokenAddress != address(0), "!scribed");
+        require(msg.value == sale[tokenKey].ethPrice, "!ethPrice");
+        require(sale[tokenKey].forSale == 1, "!forSale");
 
         // Calculate royalty payout
-        uint256 royaltyPayout = distributeRoyalties(tokenKey, buyers[tokenKey].transactionValue);
+        uint256 royaltyPayout = distributeRoyalties(tokenKey, sale[tokenKey].ethPrice);
 
         // Calculate and transfer payout to Mol
-        uint256 molPayout = (molFee * buyers[tokenKey].transactionValue).div(100);
+        uint256 molPayout = (molFee * sale[tokenKey].ethPrice).div(100);
         (bool success, ) = molBank.call.value(molPayout)("");
-        require(success, "transfer failed");
+        require(success, "!transfer");
 
-        // Owner receives purchase price less payouts to Mol and previous owners via royalties
-        uint256 buyersCut = buyers[tokenKey].transactionValue.sub(molPayout).sub(royaltyPayout);
+        // Owner receives purchase price less payouts to Mol & previous owners for royalties
+        uint256 buyersCut = sale[tokenKey].ethPrice.sub(molPayout).sub(royaltyPayout);
         (success, ) = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress.call.value(buyersCut)("");
-        require(success, "transfer failed");
+        require(success, "!transfer");
 
         // Owner transfers NFT to buyer
-        ERC721(tokenAddress).transferFrom(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, buyers[tokenKey].buyerAddress, tokenId);
+        ERC721(tokenAddress).transferFrom(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, msg.sender, tokenId);
+        emit Transfer(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, msg.sender, tokenAddress);
 
         // Decay royalties and add new owner to owners mapping
-        uint8 newDecayedRoyalties = decayRoyalties(ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties);
-        ownersPerNFT[tokenKey].push(Owner(msg.sender, newDecayedRoyalties, 0, 0));
+        uint256 updatedRoyalties = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties.sub(1);
+        ownersPerNFT[tokenKey].push(Owner(msg.sender, 0, updatedRoyalties, 0));
 
-        // Complete owner's offer
-        buyers[tokenKey].ownerOffered = 0;
+        // Reset status to forSale
+        sale[tokenKey].forSale = 0;
 
         // Update new owner to NFTs mapping
         NFTs[tokenKey].currentOwner = msg.sender;
+    }
+
+    function updateSale(address tokenAddress, uint256 tokenId, uint256 ethPrice, uint8 forSale) payable external {
+        bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
+		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "!owner");
+        require(NFTs[tokenKey].tokenAddress != address(0), "!scribed");
+
+        sale[tokenKey].ethPrice = ethPrice;
+        sale[tokenKey].forSale = forSale;
+        emit UpdateSale(ethPrice, tokenAddress, tokenId, forSale);
     }
 
     // Function for getting the document key for a given NFT address + tokenId
@@ -1125,16 +1126,16 @@ contract MolScribe {
 
     function updateMolFees(uint256 _molFee) public onlyMol {
         molFee = _molFee;
-        emit molFeesUpdated(molFee);
+        emit MolFeesUpdated(molFee);
     }
 
     function updateMolBank(address payable _molBank) public onlyMol {
         molBank = _molBank;
-        emit molBankUpdated(molBank);
+        emit MolBankUpdated(molBank);
     }
 
     function updateMol(address payable _mol) public onlyMol {
         mol = _mol;
-        emit molUpdated(mol);
+        emit MolUpdated(mol);
     }
 }
