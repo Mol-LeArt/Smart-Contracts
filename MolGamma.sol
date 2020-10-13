@@ -1,3 +1,15 @@
+/*
+DEAR MSG.SENDER(S):
+
+/ MolGamma is a project in beta.
+// Please audit and use at your own risk.
+/// There is also a DAO to join if you're curious.
+//// This is code, don't construed this as legal advice or replacement for professional counsel.
+///// STEAL THIS C0D3SL4W
+
+~ presented by Mol LeArt ~
+*/
+
 pragma solidity 0.5.17;
 pragma experimental ABIEncoderV2;
 
@@ -49,7 +61,6 @@ contract MolGamma { // Γ - mv - NFT - mkt - γ
     mapping(uint256 => address) public getApproved;
     mapping(uint256 => address) public ownerOf;
     mapping(uint256 => uint8) public didPrimarySale; // Primary sale
-    mapping(uint256 => uint256) public remixOf; // Array for storing remix references
     mapping(uint256 => uint256) public tokenByIndex;
     mapping(uint256 => string) public tokenURI;
     mapping(uint256 => Sale) public sale;
@@ -63,7 +74,6 @@ contract MolGamma { // Γ - mv - NFT - mkt - γ
     event MolBankUpdated(address indexed _molBank);
     event MolFeesUpdated(uint256 indexed _molFees);
     event MolUpdated(address indexed _mol);
-    event Remixed(uint256 indexed remixOfTokenId);
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     event UpdateSale(uint8 forSale, uint256 indexed ethPrice, uint256 indexed tokenId);
     struct Sale {
@@ -102,7 +112,7 @@ contract MolGamma { // Γ - mv - NFT - mkt - γ
         }
         return ret;
     }
-    function mint(uint8 forSale, uint256 ethPrice, uint256 remixOfTokenId, string calldata _tokenURI) external { 
+    function mint(uint8 forSale, uint256 ethPrice, string calldata _tokenURI) external { 
         totalSupply++;
         require(forSale <= 1, "!forSale value");
         require(totalSupply <= GAMMA_MAX, "maxed");
@@ -112,13 +122,11 @@ contract MolGamma { // Γ - mv - NFT - mkt - γ
         ownersByTokenId[tokenId].push(msg.sender); // push minter to owners registry per token Id
         ownerOf[tokenId] = msg.sender;
         ownersRoyaltiesByTokenId[tokenId].push(startingRoyalties); // push royalties % of minter to royalties registry per token Id
-        remixOf[tokenId] = remixOfTokenId;
         sale[tokenId].ethPrice = ethPrice;
         sale[tokenId].forSale = forSale;
         tokenByIndex[tokenId - 1] = tokenId;
         tokenOfOwnerByIndex[msg.sender][tokenId - 1] = tokenId;
         tokenURI[tokenId] = _tokenURI;
-        emit Remixed(remixOfTokenId);
         emit Transfer(address(0), msg.sender, tokenId); 
         emit UpdateSale(forSale, ethPrice, tokenId);
     }
