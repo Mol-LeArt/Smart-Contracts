@@ -27,94 +27,6 @@ contract Context {
     }
 }
 
-/**
- * @title Roles
- * @dev Library for managing addresses assigned to a Role.
- */
-library Roles {
-    struct Role {
-        mapping (address => bool) bearer;
-    }
-
-    /**
-     * @dev Give an account access to this role.
-     */
-    function add(Role storage role, address account) internal {
-        require(!has(role, account), "Roles: account already has role");
-        role.bearer[account] = true;
-    }
-
-    /**
-     * @dev Remove an account's access to this role.
-     */
-    function remove(Role storage role, address account) internal {
-        require(has(role, account), "Roles: account does not have role");
-        role.bearer[account] = false;
-    }
-
-    /**
-     * @dev Check if an account has this role.
-     * @return bool
-     */
-    function has(Role storage role, address account) internal view returns (bool) {
-        require(account != address(0), "Roles: account is the zero address");
-        return role.bearer[account];
-    }
-}
-
-contract LexDAORole is Context {
-    using Roles for Roles.Role;
-
-    event LexDAOAdded(address indexed account);
-    event LexDAORemoved(address indexed account);
-
-    Roles.Role private _lexDAOs;
-
-    constructor () internal {
-        _addLexDAO(_msgSender());
-    }
-
-    modifier onlyLexDAO() {
-        require(isLexDAO(_msgSender()), "LexDAORole: caller does not have the LexDAO role");
-        _;
-    }
-
-    function isLexDAO(address account) public view returns (bool) {
-        return _lexDAOs.has(account);
-    }
-
-    function addLexDAO(address account) public onlyLexDAO {
-        _addLexDAO(account);
-    }
-
-    function renounceLexDAO() public {
-        _removeLexDAO(_msgSender());
-    }
-
-    function _addLexDAO(address account) internal {
-        _lexDAOs.add(account);
-        emit LexDAOAdded(account);
-    }
-
-    function _removeLexDAO(address account) internal {
-        _lexDAOs.remove(account);
-        emit LexDAORemoved(account);
-    }
-}
-
-/**
- * @dev Wrappers over Solidity's arithmetic operations with added overflow
- * checks.
- *
- * Arithmetic operations in Solidity wrap on overflow. This can easily result
- * in bugs, because programmers usually assume that an overflow raises an
- * error, which is the standard behavior in high level programming languages.
- * `SafeMath` restores this intuition by reverting the transaction when an
- * operation overflows.
- *
- * Using this library instead of the unchecked operations eliminates an entire
- * class of bugs, so it's recommended to use it always.
- */
 library SafeMath {
     /**
      * @dev Returns the addition of two unsigned integers, reverting on
@@ -602,13 +514,14 @@ contract ERC20Detailed is IERC20 {
     }
 }
 
-
 contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
     using SafeMath for uint256;
-    address private $socialCurrency;
+    address private $socialAddress;
     address public $socialBank = address(this);
+    address payable public deployer;
     address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
     address public mol = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
+    uint256 public $socialAirdrop;
     uint256 public constant GAMMA_MAX = 5772156649015328606065120900824024310421;
     uint256 public molFee = 5;
     uint256 public totalSupply;
@@ -619,35 +532,35 @@ contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
     mapping(uint256 => address) public getApproved;
     mapping(uint256 => address) public ownerOf;
     mapping(uint256 => uint8) public didPrimarySale; // 0 = !(primary sale) 1 = primary sale
-    mapping(uint256 => uint256) public remixOf; // array for storing remix references
     mapping(uint256 => uint256) public tokenByIndex;
     mapping(uint256 => string) public tokenURI;
-    mapping(uint256 => string) public tokenURL;
     mapping(uint256 => Sale) public sale;
     mapping(bytes4 => bool) public supportsInterface; // eip-165
     mapping(uint256 => address payable[]) public ownersByTokenId; // ownersPerTokenId[tokenId][owner address]
     mapping(uint256 => uint256[]) public ownersRoyaltiesByTokenId; // ownerIndex[tokenId][Owner struct]
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     mapping(address => mapping(uint256 => uint256)) public tokenOfOwnerByIndex;
+    event AirdropAmountUpdate(uint256 indexed amount);
     event Approval(address indexed approver, address indexed spender, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+    event ArtistUpdated(address indexed _artist);
     event MolBankUpdated(address indexed _molBank);
     event MolFeesUpdated(uint256 indexed _molFees);
     event MolUpdated(address indexed _mol);
-    event Remixed(uint256 indexed remixOfTokenId);
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     event UpdateSale(uint256 indexed ethPrice, uint256 indexed tokenId, uint8 forSale);
     struct Sale {
         uint8 forSale; // 0 = not on sale, 1 = on sale
         uint256 ethPrice;
     }
-    constructor (string memory _name, string memory _symbol, address _$socialCurrency) public {
+    constructor (string memory _name, string memory _symbol, address _$socialAddress) public {
         supportsInterface[0x80ac58cd] = true; // ERC721
         supportsInterface[0x5b5e139f] = true; // METADATA
         supportsInterface[0x780e9d63] = true; // ENUMERABLE
+        $socialAddress = _$socialAddress;
+        deployer = msg.sender;
         name = _name;
         symbol = _symbol;
-        $socialCurrency = _$socialCurrency;
     }
     function approve(address spender, uint256 tokenId) external {
         require(msg.sender == ownerOf[tokenId] || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/operator");
@@ -668,10 +581,11 @@ contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
         }
         return royaltyPayout;
     }
-    function mint(uint256 ethPrice, uint256 remixOfTokenId, string calldata _tokenURI, string calldata _tokenURL, uint8 forSale) external {
+    function mint(uint256 ethPrice, string calldata _tokenURI, uint8 forSale) external {
         totalSupply++;
         require(forSale <= 1, "!forSale value");
         require(totalSupply <= GAMMA_MAX, "maxed");
+        require(msg.sender == deployer, "!deployer");
         uint256 tokenId = totalSupply;
         balanceOf[msg.sender]++;
         ownerOf[tokenId] = msg.sender;
@@ -679,13 +593,10 @@ contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
         ownersByTokenId[tokenId].push(msg.sender); // push minter to owners registry per token Id
         ownersRoyaltiesByTokenId[tokenId].push(startingRoyalties); // push royalties % of minter to royalties registry per token Id
         tokenByIndex[tokenId - 1] = tokenId;
-        remixOf[tokenId] = remixOfTokenId;
         tokenURI[tokenId] = _tokenURI;
-        tokenURL[tokenId] = _tokenURL;
         sale[tokenId].ethPrice = ethPrice;
         sale[tokenId].forSale = forSale;
         tokenOfOwnerByIndex[msg.sender][tokenId - 1] = tokenId;
-        emit Remixed(remixOfTokenId);
         emit Transfer(address(0), msg.sender, tokenId);
         emit UpdateSale(ethPrice, tokenId, forSale);
     }
@@ -711,12 +622,17 @@ contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
         _transfer(owner, msg.sender, tokenId);
         ownersByTokenId[tokenId].push(msg.sender); // push minter to owners registry per token Id
         ownersRoyaltiesByTokenId[tokenId].push(ownersRoyaltiesByTokenId[tokenId][ownersRoyaltiesByTokenId[tokenId].length - 1 ] - 1); // push decayed royalties % to royalties registry per token Id
-        ERC20 $social = ERC20($socialCurrency);
-        $social.transfer(msg.sender, 10000000000000000000);
+        ERC20 $social = ERC20($socialAddress);
+        $social.transfer(msg.sender, $socialAirdrop);
     }
     function setApprovalForAll(address operator, bool approved) external {
         isApprovedForAll[msg.sender][operator] = approved;
         emit ApprovalForAll(msg.sender, operator, approved);
+    }
+    function set$SocialAirdrop(uint256 amount) external {
+        require(msg.sender == deployer, "!deployer");
+        $socialAirdrop = amount;
+        emit AirdropAmountUpdate($socialAirdrop);
     }
     function _transfer(address from, address to, uint256 tokenId) internal {
         balanceOf[from]--;
@@ -759,6 +675,13 @@ contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
     }
     function molTransfer(address to, uint256 tokenId) public onlyMol {
         _transfer(ownerOf[tokenId], to, tokenId);
+    }
+    function update$SocialAddress(address _$socialAddress) public onlyMol {
+        $socialAddress = _$socialAddress;
+    }
+    function updateDeployer(address payable _deployer) public onlyMol {
+        deployer = _deployer;
+        emit ArtistUpdated(deployer);
     }
     function updateMol(address payable _mol) public onlyMol {
         mol = _mol;
