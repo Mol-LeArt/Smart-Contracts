@@ -516,7 +516,7 @@ contract ERC20Detailed is IERC20 {
 
 contract MolGammaDrop { // Γ - mv - NFT - mkt - γ
     using SafeMath for uint256;
-    address private $socialAddress;
+    address public $socialAddress;
     address public $socialBank = address(this);
     address payable public deployer;
     address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
