@@ -1331,22 +1331,15 @@ contract MolVault {
     address[] public molArtists;
     address public mol = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
     address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
-    uint256 public expensePerMint;
     uint256 public molFee = 5; // Mol takes 5% from secondary sales
-    uint256 public nftCount; // Number of NFTs donated
+    uint256 public diversity; // diversity of NFT
     uint256 public ubi = 5000000000000000000;
     uint256 public ubiMin = 1;
-
-    // uint256 xyz = 0;
-
-    // ERC20 public $mol = ERC20($molAddress);
-    // ERC20 public $pan = ERC20($panAddress);
 
     struct NFT {
         address tokenAddress;
         address payable currentOwner;
         string details;
-        uint8 didDeposit; // 1 - deposited, 0 - not deposited
         uint256 tokenId;
         uint256 startingRoyalties;
     }
@@ -1358,22 +1351,13 @@ contract MolVault {
     }
 
     struct Sale {
-        address $social;
         uint8 forSale; // 1 = sale active, 0 = sale inactive
-        uint8 molSale; // 1 = Mol authorized to sell, 0 = Mol not authorized to sell
-        uint256 airdropAmount;
         uint256 purchasePrice;
-    }
-
-    struct GasMeter {
-        string[] etherscan;
-        uint256 meter;
     }
 
     mapping(bytes => NFT) public NFTs;
 	mapping (bytes => Owner[]) public ownersPerNFT;
 	mapping (bytes => Sale) public sale;
-// 	mapping (address => GasMeter) public gasMeter;
 	mapping (address => uint256) public gasMeter;
 	mapping (address => string[]) public mints;
 
@@ -1383,13 +1367,8 @@ contract MolVault {
     event MolBankUpdated(address indexed _molBank);
     event MolUpdated(address indexed _mol);
 
-    // constructor() public {
-    //     $mol.approve(vault, uint256(-1));
-    // }
-
     function distributeRoyalties(bytes memory _tokenKey, uint256 _purchasePrice) internal returns (uint256) {
         uint256 royaltyPayout;
-        ERC20 $mol = ERC20(molAddress);
 
         for (uint256 i = 0; i < ownersPerNFT[_tokenKey].length; i++) {
             uint256 eachPayout;
@@ -1399,8 +1378,8 @@ contract MolVault {
 
             royaltyPayout += eachPayout;
 
-            // ERC20 $mol = ERC20(molCash);
-            $mol.transferFrom(msg.sender, ownersPerNFT[_tokenKey][i].ownerAddress, eachPayout);
+            (bool success, ) = ownersPerNFT[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
+            require(success, "!transfer");
 
             ownersPerNFT[_tokenKey][i].royaltiesReceived += eachPayout;
         }
@@ -1411,8 +1390,6 @@ contract MolVault {
         address tokenAddress,
         uint256 tokenId,
         uint256 purchasePrice,
-        address $social,
-        uint256 airdropAmount,
         uint256 startingRoyalties,
         uint8 forSale,
         string memory details)
@@ -1426,7 +1403,7 @@ contract MolVault {
         // Airdrop PAN
         if (gasMeter[msg.sender] > ubiMin) {
 		    ERC20 $pan = ERC20(panAddress);
-		    $pan.transfer(msg.sender, ubi);
+		    $pan.transfer(msg.sender, (gasMeter[msg.sender].sub(ubiMin)).mul(ubi));
 		    gasMeter[msg.sender] = ubiMin;
 		}
 
@@ -1438,22 +1415,18 @@ contract MolVault {
             NFTs[tokenKey].tokenId = tokenId;
             NFTs[tokenKey].currentOwner = msg.sender;
             NFTs[tokenKey].startingRoyalties = startingRoyalties;
-            NFTs[tokenKey].didDeposit = 1;
             NFTs[tokenKey].details = details;
 
             ownersPerNFT[tokenKey].push(Owner(msg.sender, startingRoyalties, 0));
 
-            sale[tokenKey].$social = $social;
-            sale[tokenKey].airdropAmount = airdropAmount;
             sale[tokenKey].purchasePrice = purchasePrice;
             sale[tokenKey].forSale = forSale;
 
-            nftCount++;
+            diversity++;
 		} else {
+		    ERC721(tokenAddress).transferFrom(msg.sender, vault, tokenId);
 		    NFTs[tokenKey].currentOwner = msg.sender;
 
-            sale[tokenKey].$social = $social;
-		    sale[tokenKey].airdropAmount = airdropAmount;
             sale[tokenKey].purchasePrice = purchasePrice;
             sale[tokenKey].forSale = forSale;
 		}
@@ -1469,26 +1442,23 @@ contract MolVault {
 
     function purchase(address tokenAddress, uint256 tokenId) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-        ERC20 $mol = ERC20(molAddress);
+        // ERC20 $mol = ERC20(molAddress);
 
         require(NFTs[tokenKey].tokenAddress != address(0), "!donated");
-        // require(sale[tokenKey].purchasePrice != purchasePrice, "!purchasePrice");
+        require(msg.value == sale[tokenKey].purchasePrice, "!purchasePrice");
         require(sale[tokenKey].forSale == 1, "!forSale");
 
         // Calculate royalty payout
-        uint256 royaltyPayout = distributeRoyalties(tokenKey, sale[tokenKey].purchasePrice);
+        uint256 royaltyPayout = distributeRoyalties(tokenKey, msg.value);
 
         // Calculate and transfer payout to Mol
-        uint256 molPayout = (molFee * sale[tokenKey].purchasePrice).div(100);
-        // ERC20 $mol = ERC20(molCash);
-        $mol.transferFrom(msg.sender, molBank, molPayout);
+        uint256 molPayout = molFee.mul(sale[tokenKey].purchasePrice).div(100);
+        (bool success, ) = molBank.call.value(molPayout)("");
+        require(success, "!transfer");
 
         // Owner receives purchase price less payouts to Mol & previous owners for royalties
         uint256 cut = sale[tokenKey].purchasePrice.sub(molPayout).sub(royaltyPayout);
-        $mol.transferFrom(msg.sender, ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress, cut);
-
-        ERC20 $social = ERC20(sale[tokenKey].$social);
-        $social.transfer(msg.sender, sale[tokenKey].airdropAmount);
+        (success, ) = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].ownerAddress.call.value(cut)("");
 
         // Owner transfers NFT to buyer
         ERC721(tokenAddress).transferFrom(vault, msg.sender, tokenId);
@@ -1509,14 +1479,12 @@ contract MolVault {
         address tokenAddress,
         uint256 tokenId,
         uint256 purchasePrice,
-        uint256 airdropAmount,
         uint8 forSale)
         payable external {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 		require(ERC721(tokenAddress).ownerOf(tokenId) == vault, "!vault"); // check in vault or not
         require(NFTs[tokenKey].tokenAddress != address(0), "!donated");
 
-        sale[tokenKey].airdropAmount = airdropAmount;
         sale[tokenKey].purchasePrice = purchasePrice;
         sale[tokenKey].forSale = forSale;
         emit UpdateSale(purchasePrice, tokenAddress, tokenId, forSale);
@@ -1537,16 +1505,6 @@ contract MolVault {
     function molDonate(address tokenAddress, uint256 tokenId, address payable currentOwner) public onlyMol {
         ERC721(tokenAddress).transferFrom(vault, currentOwner, tokenId);
     }
-//     function molSale(address tokenAddress, uint256 tokenId, uint256 purchasePrice, uint256 airdropAmount, uint8 forSale) public onlyMol {
-//         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-// 		require(ERC721(tokenAddress).ownerOf(tokenId) == vault, "!vault"); // check in vault or not
-//         require(NFTs[tokenKey].tokenAddress != address(0), "!donated");
-
-//         sale[tokenKey].airdropAmount = airdropAmount;
-//         sale[tokenKey].purchasePrice = purchasePrice;
-//         sale[tokenKey].forSale = forSale;
-//         emit UpdateSale(purchasePrice, tokenAddress, tokenId, forSale);
-//     }
 
     function removeArtistFromWhitelist(address payable artist) public onlyMol {
         gasMeter[artist] = 0;
@@ -1562,10 +1520,6 @@ contract MolVault {
         require(gasMeter[artist] == 0, "duplicate");
         gasMeter[artist] += 1;
         molArtists.push(artist);
-    }
-
-    function updateExpensePerMint(uint256 _expensePerMint) public onlyMol {
-        expensePerMint = _expensePerMint;
     }
 
     function updateUBI(uint256 _ubi) public onlyMol {
