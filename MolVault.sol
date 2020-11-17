@@ -38,84 +38,6 @@ contract Context {
     }
 }
 
-// File: node_modules\@openzeppelin\contracts\ownership\Ownable.sol
-
-
-/**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
- */
-contract Ownable is Context {
-    address private _owner;
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Initializes the contract setting the deployer as the initial owner.
-     */
-    constructor () internal {
-        _owner = _msgSender();
-        emit OwnershipTransferred(address(0), _owner);
-    }
-
-    /**
-     * @dev Returns the address of the current owner.
-     */
-    function owner() public view returns (address) {
-        return _owner;
-    }
-
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
-    modifier onlyOwner() {
-        require(isOwner(), "Ownable: caller is not the owner");
-        _;
-    }
-
-    /**
-     * @dev Returns true if the caller is the current owner.
-     */
-    function isOwner() public view returns (bool) {
-        return _msgSender() == _owner;
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions anymore. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby removing any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public onlyOwner {
-        emit OwnershipTransferred(_owner, address(0));
-        _owner = address(0);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) public onlyOwner {
-        _transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     */
-    function _transferOwnership(address newOwner) internal {
-        require(newOwner != address(0), "Ownable: new owner is the zero address");
-        emit OwnershipTransferred(_owner, newOwner);
-        _owner = newOwner;
-    }
-}
-
-
 /**
  * @dev Interface of the ERC20 standard as defined in the EIP. Does not include
  * the optional functions; to access them see {ERC20Detailed}.
@@ -1326,14 +1248,14 @@ contract MolVault {
     using SafeMath for uint256;
 
     address private vault = address(this);
-    address public molAddress = 0xe31AC78ea6A1dF83B9Aa934f37ADf1F36858C026;
-    address public panAddress = 0xe31AC78ea6A1dF83B9Aa934f37ADf1F36858C026;
-    address[] public molArtists;
+    address public panAddress = 0x81f2bfd3cE681081CdC7aBb32A20Dc17BcDAFdC0;
     address public mol = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
-    address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
-    uint256 public molFee = 5; // Mol takes 5% from secondary sales
+    address[] public artists;
+    address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8; 
+    address[] public social;
     uint256 public diversity; // diversity of NFT
-    uint256 public ubi = 5000000000000000000;
+    uint256 public molFee = 5; // Mol takes 5% from secondary sales
+    uint256 public ubi = 300000000000000000000;
     uint256 public ubiMin = 1;
 
     struct NFT {
@@ -1360,6 +1282,7 @@ contract MolVault {
 	mapping (bytes => Sale) public sale;
 	mapping (address => uint256) public gasMeter;
 	mapping (address => string[]) public mints;
+	mapping (address => uint256) public airdrop;
 
     event Transfer(address indexed from, address indexed to, address indexed tokenAddress);
     event UpdateSale(uint256 indexed ethPrice, address indexed tokenAddress, uint256 indexed tokenId, uint8 forSale);
@@ -1377,36 +1300,43 @@ contract MolVault {
             eachPayout = eachPayout.div(100);
 
             royaltyPayout += eachPayout;
-
+            
             (bool success, ) = ownersPerNFT[_tokenKey][i].ownerAddress.call.value(eachPayout)("");
             require(success, "!transfer");
-
+            
             ownersPerNFT[_tokenKey][i].royaltiesReceived += eachPayout;
         }
         return royaltyPayout;
     }
-
-    function safekeep(
-        address tokenAddress,
-        uint256 tokenId,
-        uint256 purchasePrice,
+    
+    function distributeSocial() internal {
+        for (uint256 i = 0; i < social.length; i++) {
+            if (airdrop[social[i]] != 0) {
+                ERC20 $social = ERC20(social[i]);
+                $social.transfer(msg.sender, airdrop[social[i]]);
+            }
+        }
+    }
+    
+    function deposit(
+        address tokenAddress, 
+        uint256 tokenId, 
+        uint256 purchasePrice, 
         uint256 startingRoyalties,
         uint8 forSale,
-        string memory details)
+        string memory details) 
         public {
-
+        
 		require(ERC721(tokenAddress).ownerOf(tokenId) == msg.sender, "!owner");
-        // ERC20 $mol = ERC20($molAddress);
-        // $mol.transfer(msg.sender, 100000000000000000000);
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-
+        
         // Airdrop PAN
         if (gasMeter[msg.sender] > ubiMin) {
 		    ERC20 $pan = ERC20(panAddress);
 		    $pan.transfer(msg.sender, (gasMeter[msg.sender].sub(ubiMin)).mul(ubi));
 		    gasMeter[msg.sender] = ubiMin;
 		}
-
+        
         // Has this NFT been in MolVault before?
 		if (NFTs[tokenKey].tokenAddress == address(0)) {
 		    ERC721(tokenAddress).transferFrom(msg.sender, vault, tokenId);
@@ -1416,12 +1346,12 @@ contract MolVault {
             NFTs[tokenKey].currentOwner = msg.sender;
             NFTs[tokenKey].startingRoyalties = startingRoyalties;
             NFTs[tokenKey].details = details;
-
+    
             ownersPerNFT[tokenKey].push(Owner(msg.sender, startingRoyalties, 0));
 
             sale[tokenKey].purchasePrice = purchasePrice;
             sale[tokenKey].forSale = forSale;
-
+    
             diversity++;
 		} else {
 		    ERC721(tokenAddress).transferFrom(msg.sender, vault, tokenId);
@@ -1430,19 +1360,18 @@ contract MolVault {
             sale[tokenKey].purchasePrice = purchasePrice;
             sale[tokenKey].forSale = forSale;
 		}
-
+		
         emit UpdateSale(purchasePrice, tokenAddress, tokenId, forSale);
 	}
 
     function updateGasMeter(string memory etherscan) public {
-        require(gasMeter[msg.sender] > 0, "!whitelisted");
+        require(gasMeter[msg.sender] > 0, "!managed");
         mints[msg.sender].push(etherscan);
         gasMeter[msg.sender] += 1;
     }
 
-    function purchase(address tokenAddress, uint256 tokenId) public payable {
+    function buy(address tokenAddress, uint256 tokenId) public payable {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
-        // ERC20 $mol = ERC20(molAddress);
 
         require(NFTs[tokenKey].tokenAddress != address(0), "!donated");
         require(msg.value == sale[tokenKey].purchasePrice, "!purchasePrice");
@@ -1464,6 +1393,9 @@ contract MolVault {
         ERC721(tokenAddress).transferFrom(vault, msg.sender, tokenId);
         emit Transfer(vault, msg.sender, tokenAddress);
 
+        // Transfer $social of residency artists to buyer
+        distributeSocial();
+        
         // Decay royalties and add new owner to owners mapping
         uint256 updatedRoyalties = ownersPerNFT[tokenKey][ownersPerNFT[tokenKey].length - 1].royalties.sub(1);
         ownersPerNFT[tokenKey].push(Owner(msg.sender, updatedRoyalties, 0));
@@ -1476,11 +1408,11 @@ contract MolVault {
     }
 
     function updateSale(
-        address tokenAddress,
-        uint256 tokenId,
-        uint256 purchasePrice,
-        uint8 forSale)
-        payable external {
+        address tokenAddress, 
+        uint256 tokenId, 
+        uint256 purchasePrice, 
+        uint8 forSale) 
+        public {
         bytes memory tokenKey = getTokenKey(tokenAddress, tokenId);
 		require(ERC721(tokenAddress).ownerOf(tokenId) == vault, "!vault"); // check in vault or not
         require(NFTs[tokenKey].tokenAddress != address(0), "!donated");
@@ -1499,33 +1431,27 @@ contract MolVault {
     Mol LeArt Functions
     ***************/
     modifier onlyMol () {
-        require(msg.sender == mol, "caller not lexDAO");
+        require(msg.sender == mol, "!mol");
         _;
     }
     function molDonate(address tokenAddress, uint256 tokenId, address payable currentOwner) public onlyMol {
         ERC721(tokenAddress).transferFrom(vault, currentOwner, tokenId);
     }
+   
+    function removeArtist(address payable _artist) public onlyMol {
+        gasMeter[_artist] = 0;
 
-    function removeArtistFromWhitelist(address payable artist) public onlyMol {
-        gasMeter[artist] = 0;
-
-        for (uint256 i = 0; i < molArtists.length; i++) {
-            if (molArtists[i] == artist) {
-                molArtists[i] = address(0xdead);
+        for (uint256 i = 0; i < artists.length; i++) {
+            if (artists[i] == _artist) {
+                artists[i] = address(0xdead);   
             }
         }
-    }
-
-    function updateArtistWhitelist(address payable artist) public onlyMol {
-        require(gasMeter[artist] == 0, "duplicate");
-        gasMeter[artist] += 1;
-        molArtists.push(artist);
     }
 
     function updateUBI(uint256 _ubi) public onlyMol {
         ubi = _ubi;
     }
-
+    
     function updateMolFees(uint256 _molFee) public onlyMol {
         molFee = _molFee;
         emit MolFeesUpdated(molFee);
@@ -1539,5 +1465,22 @@ contract MolVault {
     function updateMol(address payable _mol) public onlyMol {
         mol = _mol;
         emit MolUpdated(mol);
+    }
+    
+    function manageArtists(address payable artist) public onlyMol {
+        require(gasMeter[artist] == 0, "duplicate");
+        gasMeter[artist] += 1;
+        artists.push(artist);
+    }
+    
+    // adding a previously removed $social (setting _airdrop = 0) results in 
+    // double airdropping of $social
+    function manageSocial(address _social, uint256 _airdrop) public onlyMol {
+        if (airdrop[_social] > 0) {
+            airdrop[_social] = _airdrop;
+        } else {
+            social.push(_social);
+            airdrop[_social] = _airdrop;
+        }
     }
 }
