@@ -11,6 +11,7 @@ DEAR MSG.SENDER(S):
 */
 
 pragma solidity 0.5.17;
+pragma experimental ABIEncoderV2;
 
 library SafeMath { // arithmetic wrapper for unit under/overflow check
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -41,6 +42,10 @@ library SafeMath { // arithmetic wrapper for unit under/overflow check
     }
 }
 
+interface IERC20 {
+    function transfer(address recipient, uint256 amount) external returns (bool);
+}
+
 library Utilities {
     function append(string memory a, string memory b) internal pure returns (string memory) {
         return string(abi.encodePacked(a, b));
@@ -52,8 +57,10 @@ contract MolGamma {
     address payable public creator;
     address public mol = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
     address payable public molBank = 0xF09631d7BA044bfe44bBFec22c0A362c7e9DCDd8;
+    address public socialAddress = address(0);
     uint256 public constant GAMMA_MAX = 5772156649015328606065120900824024310421;
     uint256 public molFee = 5;
+    uint256 public socialAirdrop;
     uint256 public startingRoyalties = 10;
     uint256 public totalSupply;
     string public gRoyaltiesURI;
@@ -68,11 +75,12 @@ contract MolGamma {
     mapping(uint256 => Sale) public sale;
     mapping(bytes4 => bool) public supportsInterface; // eip-165 
     mapping(uint256 => address payable[]) public gRoyaltiesByTokenId; // gRoyaltiesByTokenId[tokenId][array of gRoyalties address]
-    mapping(uint256 => uint256[]) public royaltiesByTokenId; // ownersRoyaltiesByTokenId[tokenId][array of royalties %]
+    mapping(uint256 => uint256[]) public royaltiesByTokenId; // royaltiesByTokenId[tokenId][array of royalties %]
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     mapping(address => mapping(uint256 => uint256)) public tokenOfOwnerByIndex;
     event Approval(address indexed approver, address indexed spender, uint256 indexed tokenId);
     event ApprovalForAll(address indexed holder, address indexed operator, bool approved);
+    event gRoyaltiesMinted(address indexed contractAddress);
     event MolBankUpdated(address indexed _molBank);
     event MolFeesUpdated(uint256 indexed _molFees);
     event MolUpdated(address indexed _mol);
@@ -131,6 +139,7 @@ contract MolGamma {
         g.transfer(msg.sender, 1);
         gRoyaltiesByTokenId[tokenId].push(address(g));
         
+        emit gRoyaltiesMinted(address(g));
         emit Transfer(address(0), msg.sender, tokenId); 
         emit UpdateSale(forSale, ethPrice, tokenId);
     }
@@ -159,6 +168,18 @@ contract MolGamma {
         g.mint(Utilities.append(name, " Royalties Token"), gRoyaltiesURI);
         g.transfer(creator, 1);
         gRoyaltiesByTokenId[tokenId].push(address(g));
+        
+        // Airdrop $social
+        if (socialAddress != address(0)) {
+            IERC20(socialAddress).transfer(msg.sender, socialAirdrop);    
+        }
+        
+        emit gRoyaltiesMinted(address(g));
+    }
+    function setSocialAirdrop(address social, uint256 amount) external {
+        require(msg.sender == creator, "!creator");
+        socialAddress = social;
+        socialAirdrop = amount;
     }
     function setApprovalForAll(address operator, bool approved) external {
         isApprovedForAll[msg.sender][operator] = approved;
@@ -187,6 +208,18 @@ contract MolGamma {
         sale[tokenId].ethPrice = ethPrice;
         sale[tokenId].forSale = forSale;
         emit UpdateSale(forSale, ethPrice, tokenId);
+    }
+    function getAllTokenURI() public view returns (string[] memory){
+        string[] memory ret = new string[](totalSupply);
+        for (uint i = 0; i < totalSupply; i++) {
+            ret[i] = tokenURI[i.add(1)];
+        }
+        return ret;
+    }
+    function getRoyalties(uint256 _tokenId) public view returns (address payable[] memory, uint256[] memory) {
+        address payable[] memory gR = gRoyaltiesByTokenId[_tokenId];
+        uint256[] memory r = royaltiesByTokenId[_tokenId];
+        return (gR, r);
     }
 
     /******************
