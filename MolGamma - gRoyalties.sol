@@ -44,6 +44,7 @@ library SafeMath { // arithmetic wrapper for unit under/overflow check
 
 interface IERC20 {
     function transfer(address recipient, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 library Utilities {
@@ -170,7 +171,7 @@ contract MolGamma {
         gRoyaltiesByTokenId[tokenId].push(address(g));
         
         // Airdrop $social
-        if (socialAddress != address(0)) {
+        if (socialAddress != address(0) && IERC20(socialAddress).balanceOf(address(this)) > socialAirdrop) {
             IERC20(socialAddress).transfer(msg.sender, socialAirdrop);    
         }
         
