@@ -148,6 +148,7 @@ contract MolVault {
 	    require(numSaleConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
         uint256 cut = (bid / owners.length);
 
+        // Reset sale confirmations
         for (uint8 i = 0; i < owners.length; i++) {
 	        (bool success, ) = owners[i].call{value: cut}("");
             require(success, "!transfer");
@@ -155,16 +156,24 @@ contract MolVault {
             numSaleConfirmations = 0;
 	    }
         
+        // Clear ownership
         for (uint8 i = 0; i < owners.length; i++) {
             isOwner[owners[i]] = false;
         }
         
+        // Transition ownership 
         owners = newOwners;
         
         for (uint8 i = 0; i < owners.length; i++) {
             isOwner[owners[i]] = true;
         }
         
+        // Clear whitelist
+        for (uint8 i = 0; i < whitelist.length; i++) {
+            isWhitelisted[whitelist[i]] = false;
+        }
+        
+        // Reset bid and bidder
         bidder = address(0);
         bid = 0;
     }
