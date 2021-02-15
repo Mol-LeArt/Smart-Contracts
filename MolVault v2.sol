@@ -34,6 +34,7 @@ contract MolVault {
     address payable[] public owners;
     address[] public whitelist;
     address payable[] public newOwners;
+    address payable public bidder;
     uint8 public numConfirmationsRequired;
     uint8 public numWithdrawalConfirmations;
     uint8 public numSaleConfirmations;
@@ -71,7 +72,7 @@ contract MolVault {
         numConfirmationsRequired = _numConfirmationsRequired;
     }
     
-    modifier onlyOwner() {
+    modifier onlyOwners() {
         require(isOwner[msg.sender], "!owner");
         _;
     }
@@ -112,59 +113,75 @@ contract MolVault {
     }
     
     function updateSale(address _tokenAddress, uint256 _tokenId, uint256 _price, uint8 _forSale) public {
-        require(IERC721(_tokenAddress).ownerOf(_tokenId) == msg.sender, "!owner");
+        require(isOwner[msg.sender], "Not one of owners!");
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         
         sale[tokenKey].price = _price;
         sale[tokenKey].forSale = _forSale;
     }
     
-    function confirmSale() public onlyOwner {
+    function confirmSale() public onlyOwners {
         require(!saleConfirmed[msg.sender], 'Msg.sender already confirmed vault sale!');
 	    numSaleConfirmations++;
 	    saleConfirmed[msg.sender] = true;
 	}
 	
-	function revokeSale() public onlyOwner {
+	function revokeSale() public onlyOwners {
         require(saleConfirmed[msg.sender], 'Msg.sender did not confirm vault sale!');
 	    numSaleConfirmations--;
 	    saleConfirmed[msg.sender] = false;
 	}
     
     function bidVault(address payable[] memory _newOwners) public payable {
-        require(msg.value > bid, "You must bid higher than the existing bid!");
+        require(msg.value > bid, "You must bid higher than the existing bid!"); // tricky 
         require(_newOwners.length > 0, "There must be at least one new owner!");
+        
+        (bool success, ) = bidder.call{value: bid}("");
+        require(success, "!transfer");
+        
+        bidder = msg.sender;
         bid = msg.value;
         newOwners = _newOwners;
     }
     
-    function sellVault() public onlyOwner {
+    function sellVault() public onlyOwners {
 	    require(numSaleConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
         uint256 cut = (bid / owners.length);
 
-        for (uint8 i = 0; i < owners.length; i++){
+        for (uint8 i = 0; i < owners.length; i++) {
 	        (bool success, ) = owners[i].call{value: cut}("");
             require(success, "!transfer");
             saleConfirmed[owners[i]] = false;
             numSaleConfirmations = 0;
 	    }
         
+        for (uint8 i = 0; i < owners.length; i++) {
+            isOwner[owners[i]] = false;
+        }
+        
         owners = newOwners;
+        
+        for (uint8 i = 0; i < owners.length; i++) {
+            isOwner[owners[i]] = true;
+        }
+        
+        bidder = address(0);
+        bid = 0;
     }
 	
-	function confirmWithdrawal() public onlyOwner {
+	function confirmWithdrawal() public onlyOwners {
 	    require(!withdrawalConfirmed[msg.sender], 'Withdrawal already confirmed!');
 	    numWithdrawalConfirmations++;
 	    withdrawalConfirmed[msg.sender] = true;
 	}
 	
-	function revokeWithdrawal() public onlyOwner { 
+	function revokeWithdrawal() public onlyOwners { 
 	    require(withdrawalConfirmed[msg.sender], 'Withdrawal not confirmed!');
 	    numWithdrawalConfirmations--;
 	    withdrawalConfirmed[msg.sender] = false;
 	}
 	
-	function executeWithdrawal() public onlyOwner {
+	function executeWithdrawal() public onlyOwners {
 	    require(numWithdrawalConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
 	    
         uint256 cut = (address(this).balance / owners.length);
@@ -178,7 +195,7 @@ contract MolVault {
 	    }
 	}
 	
-	function addToWhitelist(address[] memory _address) public onlyOwner {
+	function addToWhitelist(address[] memory _address) public onlyOwners {
 	    for (uint8 i = 0; i < _address.length; i++) {
 	        address newAddress = _address[i];
 	        require(!isWhitelisted[newAddress], "Already whitelisted!");
@@ -187,7 +204,7 @@ contract MolVault {
 	    }
 	}
 	
-	function removeFromWhitelist(address[] memory _address) public onlyOwner {
+	function removeFromWhitelist(address[] memory _address) public onlyOwners {
 	    for (uint8 i = 0; i < _address.length; i++) {
 	        address newAddress = _address[i];
 	        require(isWhitelisted[newAddress], "No address to remove!");
@@ -199,6 +216,10 @@ contract MolVault {
 	            }
 	        }
 	    }
+	}
+	
+	function updateOwners(address payable[] memory _newOwners) public onlyOwners {
+	    owners = _newOwners;
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
