@@ -34,13 +34,13 @@ contract MolVault {
     address[] public whitelist;
     address payable[] public newOwners;
     address payable public bidder;
-    address public g;
+    // address public g;
     uint8 public numConfirmationsRequired;
     uint8 public numWithdrawalConfirmations;
     uint8 public numSaleConfirmations;
     uint256 public bid = 0;
     uint256 public gammaSupply = 0;
-    uint256 public goal = 1000000000000000000;
+    uint256 public goal = 100000000000000000;
     uint public goalPerc = 100;
     
     GAMMA public gamma = new GAMMA();
@@ -49,6 +49,8 @@ contract MolVault {
     LiteToken vaultShares;
     string public name;
     string public symbol;
+    uint256 public totalShares = 1000000000000000000000;
+    uint256 public constantK;
     uint8 public didMintShares = 0;
     address payable[] public fundingCollectors;
     
@@ -87,6 +89,7 @@ contract MolVault {
         
         name = _name;
         symbol = _symbol;
+        constantK = goal * totalShares;
     }
     
     modifier onlyOwners() {
@@ -129,12 +132,22 @@ contract MolVault {
         sale[tokenKey].forSale = _forSale;  
 	}
     
+    function distributeFee(uint256 fee) private {
+        for (uint i = 0; i < fundingCollectors.length; i++) {
+            uint split = fee * fundingCollectorPerc[fundingCollectors[i]] / 100;
+            (bool success, ) = fundingCollectors[i].call{value: split}("");
+            require(success, "!transfer");
+        }
+    }
+    
     function purchase(address _tokenAddress, uint256 _tokenId) public payable {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
-        require(sale[tokenKey].ethPrice == msg.value, "!price");
+        // require(sale[tokenKey].ethPrice == msg.value, "!price");
         require(!isOwner[msg.sender], "Owners cannot buy!");
         
+        uint256 fee = sale[tokenKey].ethPrice * 3 / 1000;
+        require((sale[tokenKey].ethPrice + fee) == msg.value, "!price");
         
         if (goalPerc > 0) {
             // check if fundingCollector 
@@ -144,6 +157,7 @@ contract MolVault {
             
                if (perc > goalPerc) {
                    fundingCollectorPerc[msg.sender] = goalPerc;
+                   goalPerc = 0;
                } else {
                    fundingCollectorPerc[msg.sender] = perc;
                    goalPerc = goalPerc - perc;
@@ -153,12 +167,17 @@ contract MolVault {
             require(success, "!transfer");
         } else {
             if (didMintShares == 0) {
-                vaultShares = new LiteToken(name, symbol, 18, vault, 1000000000000000000000000, 1000000000000000000000000, true);    
+                vaultShares = new LiteToken(name, symbol, 18, vault, totalShares, totalShares, true);    
                 didMintShares = 1;
             }
 
-            (bool success, ) = vault.call{value: msg.value}("");
+            (bool success, ) = vault.call{value: sale[tokenKey].ethPrice}("");
             require(success, "!transfer");
+            
+            distributeFee(fee);
+            
+            uint256 amount = totalShares - constantK / (msg.value + goal);
+            vaultShares.transfer(msg.sender, amount);
         }
         
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
