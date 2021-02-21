@@ -40,12 +40,22 @@ contract MolVault {
     uint8 public numSaleConfirmations;
     uint256 public bid = 0;
     uint256 public gammaSupply = 0;
+    uint256 public goal = 1000000000000000000;
+    uint public goalPerc = 100;
     
     GAMMA public gamma = new GAMMA();
     
+    // Vault Shares
+    LiteToken vaultShares;
+    string public name;
+    string public symbol;
+    uint8 public didMintShares = 0;
+    address payable[] public fundingCollectors;
+    
     struct Sale {
         uint8 forSale; // 1 = sale active, 0 = sale inactive
-        uint256 price;
+        uint256 ethPrice;
+        uint256 tokenPrice;
     }
     
     mapping (bytes => bool) public NFTs;
@@ -54,8 +64,9 @@ contract MolVault {
     mapping (address => bool) public isWhitelisted;
     mapping (address => bool) public withdrawalConfirmed;
     mapping (address => bool) public saleConfirmed;
+    mapping (address => uint) public fundingCollectorPerc;
 
-    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired) public {
+    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol) public {
         require(_owners.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length, "invalid number of required confirmations");
 
@@ -73,6 +84,9 @@ contract MolVault {
         }
 
         numConfirmationsRequired = _numConfirmationsRequired;
+        
+        name = _name;
+        symbol = _symbol;
     }
     
     modifier onlyOwners() {
@@ -85,19 +99,21 @@ contract MolVault {
         _;
     }
     
-    function mint(uint256 _price, string calldata _tokenURI, uint8 _forSale) public onlyWhitelisted{
+    function mint(uint256 _ethPrice, uint256 _tokenPrice, string memory _tokenURI, uint8 _forSale) public onlyWhitelisted{
         gammaSupply++;
-        gamma.mint(_price, _tokenURI, _forSale);
+        gamma.mint(_ethPrice, _tokenURI, _forSale);
         bytes memory tokenKey = getTokenKey(address(gamma), gammaSupply);
         NFTs[tokenKey] = true;
-        sale[tokenKey].price = _price;
+        sale[tokenKey].ethPrice = _ethPrice;
+        sale[tokenKey].tokenPrice = _tokenPrice;
         sale[tokenKey].forSale = _forSale;
     }
     
     function deposit(
         address _tokenAddress, 
         uint256 _tokenId, 
-        uint256 _price, 
+        uint256 _ethPrice,
+        uint256 _tokenPrice, 
         uint8 _forSale) 
         public onlyWhitelisted {
 		require(IERC721(_tokenAddress).ownerOf(_tokenId) == msg.sender, "!owner");
@@ -108,28 +124,72 @@ contract MolVault {
         IERC721(_tokenAddress).transferFrom(msg.sender, vault, _tokenId);
     
         // Set sale status
-        sale[tokenKey].price = _price;
-        sale[tokenKey].forSale = _forSale;
+        sale[tokenKey].ethPrice = _ethPrice;
+        sale[tokenKey].tokenPrice = _tokenPrice;
+        sale[tokenKey].forSale = _forSale;  
 	}
     
     function purchase(address _tokenAddress, uint256 _tokenId) public payable {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
-        require(sale[tokenKey].price == msg.value, "!price");
+        require(sale[tokenKey].ethPrice == msg.value, "!price");
+        require(!isOwner[msg.sender], "Owners cannot buy!");
+        
+        
+        if (goalPerc > 0) {
+            // check if fundingCollector 
+            if (fundingCollectorPerc[msg.sender] == 0) {
+               fundingCollectors.push(msg.sender); 
+               uint perc = msg.value * 100 / goal; 
+            
+               if (perc > goalPerc) {
+                   fundingCollectorPerc[msg.sender] = goalPerc;
+               } else {
+                   fundingCollectorPerc[msg.sender] = perc;
+                   goalPerc = goalPerc - perc;
+               }
+            }
+            (bool success, ) = vault.call{value: msg.value}("");
+            require(success, "!transfer");
+        } else {
+            if (didMintShares == 0) {
+                vaultShares = new LiteToken(name, symbol, 18, vault, 1000000000000000000000000, 1000000000000000000000000, true);    
+                didMintShares = 1;
+            }
+
+            (bool success, ) = vault.call{value: msg.value}("");
+            require(success, "!transfer");
+        }
         
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
-        (bool success, ) = vault.call{value: msg.value}("");
-        require(success, "!transfer");
+        sale[tokenKey].forSale = 0;
+    }
+    
+    function tokenPurchase(address _tokenAddress, uint256 _tokenId) public payable {
+        bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
+        require(sale[tokenKey].forSale == 1, "!sale");
+        require(vaultShares.balanceOf(msg.sender) > sale[tokenKey].tokenPrice, "!price");
+        require(!isOwner[msg.sender], "Owners cannot buy!");
+        require(didMintShares == 1, "No shares minted yet!");
         
+        vaultShares.transferFrom(msg.sender, vault, sale[tokenKey].tokenPrice); 
+        IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
         sale[tokenKey].forSale == 0;
     }
     
-    function updateSale(address _tokenAddress, uint256 _tokenId, uint256 _price, uint8 _forSale) public {
+    function updateSale(address _tokenAddress, uint256 _tokenId, uint256 _ethPrice, uint256 _tokenPrice, uint8 _forSale) public {
         require(isOwner[msg.sender], "Not owner of GAMMA!");
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         
-        sale[tokenKey].price = _price;
-        sale[tokenKey].forSale = _forSale;
+        // Set sale status
+        if (didMintShares == 0) {
+            sale[tokenKey].ethPrice = _ethPrice;
+            sale[tokenKey].forSale = _forSale;  
+        } else {
+            sale[tokenKey].ethPrice = _ethPrice;
+            sale[tokenKey].tokenPrice = _tokenPrice;
+            sale[tokenKey].forSale = _forSale;  
+        }
     }
     
     function confirmSale() public onlyOwners {
@@ -191,6 +251,7 @@ contract MolVault {
     }
 	
 	function confirmWithdrawal() public onlyOwners {
+	    // might require didMintShares != 0
 	    require(!withdrawalConfirmed[msg.sender], 'Withdrawal already confirmed!');
 	    numWithdrawalConfirmations++;
 	    withdrawalConfirmed[msg.sender] = true;
@@ -203,6 +264,7 @@ contract MolVault {
 	}
 	
 	function executeWithdrawal() public onlyOwners {
+	    // might require didMintShares != 0
 	    require(numWithdrawalConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
 	    
         uint256 cut = (address(this).balance / owners.length);
@@ -239,12 +301,24 @@ contract MolVault {
 	    }
 	}
 	
-	function retrieveGamma(address _tokenAddress, uint256 _tokenId) public onlyOwners {
+	function getWhitelist() public view returns (address[] memory){
+	    address[] memory roster = new address[](whitelist.length);
+	    for (uint i = 0; i < whitelist.length; i++) {
+	        roster[i] = whitelist[i + 1];
+	    }    
+	    return roster;
+	}
+	
+	function removeGamma(address _tokenAddress, uint256 _tokenId) public onlyOwners {
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
 	}
 	
 	function updateOwners(address payable[] memory _newOwners) public onlyOwners {
 	    owners = _newOwners;
+	}
+	
+	function transferVaultTokens(address payable _recipient, uint256 _amount) public onlyOwners{
+	    vaultShares.transfer(_recipient, _amount);
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
@@ -351,4 +425,27 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         require(success, "!transfer");
         emit UpdateSale(ethPrice, tokenId, forSale);
     }
+}
+
+contract LiteToken { // minimal viable erc20 token with common extensions, such as burn, cap, mint, pauseable, admin functions
+    address public owner;
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
+    uint256 public totalSupplyCap;
+    bool public transferable; 
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256) public balanceOf;
+    constructor(string memory _name, string memory _symbol, uint8 _decimals, address _owner, uint256 _initialSupply, uint256 _totalSupplyCap, bool _transferable) public {require(_initialSupply <= _totalSupplyCap, "capped");
+        name = _name; symbol = _symbol; decimals = _decimals; owner = _owner; totalSupply = _initialSupply; totalSupplyCap = _totalSupplyCap; transferable = _transferable; balanceOf[owner] = totalSupply; emit Transfer(address(0), owner, totalSupply);}
+    function approve(address spender, uint256 amount) external returns (bool) {require(amount == 0 || allowance[msg.sender][spender] == 0); allowance[msg.sender][spender] = amount; emit Approval(msg.sender, spender, amount); return true;}
+    function burn(uint256 amount) external {balanceOf[msg.sender] = balanceOf[msg.sender] - amount; totalSupply = totalSupply - amount; emit Transfer(msg.sender, address(0), amount);}
+    function mint(address recipient, uint256 amount) external {require(msg.sender == owner, "!owner"); require(totalSupply + amount <= totalSupplyCap, "capped"); balanceOf[recipient] = balanceOf[recipient] + amount; totalSupply = totalSupply + amount; emit Transfer(address(0), recipient, amount);}
+    function transfer(address recipient, uint256 amount) external returns (bool) {require(transferable == true); balanceOf[msg.sender] = balanceOf[msg.sender] - amount; balanceOf[recipient] = balanceOf[recipient] + amount; emit Transfer(msg.sender, recipient, amount); return true;}
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool) {require(transferable == true); balanceOf[sender] = balanceOf[sender] - amount; balanceOf[recipient] = balanceOf[recipient] + amount; allowance[sender][msg.sender] = allowance[sender][msg.sender] - amount; emit Transfer(sender, recipient, amount); return true;}
+    function transferOwner(address _owner) external {require(msg.sender == owner, "!owner"); owner = _owner;}
+    function updateTransferability(bool _transferable) external {require(msg.sender == owner, "!owner"); transferable = _transferable;}
 }
