@@ -34,14 +34,15 @@ contract MolVault {
     address[] public whitelist;
     address payable[] public newOwners;
     address payable public bidder;
-    // address public g;
     uint8 public numConfirmationsRequired;
     uint8 public numWithdrawalConfirmations;
     uint8 public numSaleConfirmations;
     uint256 public bid = 0;
     uint256 public gammaSupply = 0;
     uint256 public goal = 100000000000000000;
-    uint public goalPerc = 100;
+    uint256 public goalPerc = 100;
+    uint256 public lockPeriod = 100;
+    uint256 public lockStartTime;
     
     GAMMA public gamma = new GAMMA();
     
@@ -49,8 +50,8 @@ contract MolVault {
     LiteToken vaultShares;
     string public name;
     string public symbol;
-    uint256 public totalShares = 1000000000000000000000;
-    uint256 public constantK;
+    uint256 public airdrop;
+    uint256 public totalShares = 1000000000000000000000000;
     uint8 public didMintShares = 0;
     address payable[] public fundingCollectors;
     
@@ -89,7 +90,6 @@ contract MolVault {
         
         name = _name;
         symbol = _symbol;
-        constantK = goal * totalShares;
     }
     
     modifier onlyOwners() {
@@ -168,6 +168,7 @@ contract MolVault {
         } else {
             if (didMintShares == 0) {
                 vaultShares = new LiteToken(name, symbol, 18, vault, totalShares, totalShares, true);    
+                lockStartTime = block.timestamp;
                 didMintShares = 1;
             }
 
@@ -175,9 +176,7 @@ contract MolVault {
             require(success, "!transfer");
             
             distributeFee(fee);
-            
-            uint256 amount = totalShares - constantK / (msg.value + goal);
-            vaultShares.transfer(msg.sender, amount);
+            vaultShares.transferFrom(vault, msg.sender, airdrop);
         }
         
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
@@ -283,7 +282,8 @@ contract MolVault {
 	}
 	
 	function executeWithdrawal() public onlyOwners {
-	    // might require didMintShares != 0
+	    require(now > lockStartTime + lockPeriod, "Time-locked");
+	    require(didMintShares == 1, "Vault shares not minted!");
 	    require(numWithdrawalConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
 	    
         uint256 cut = (address(this).balance / owners.length);
@@ -320,10 +320,10 @@ contract MolVault {
 	    }
 	}
 	
-	function getWhitelist() public view returns (address[] memory){
+	function getWhitelist() public view returns (address[] memory) {
 	    address[] memory roster = new address[](whitelist.length);
 	    for (uint i = 0; i < whitelist.length; i++) {
-	        roster[i] = whitelist[i + 1];
+	        roster[i] = whitelist[i];
 	    }    
 	    return roster;
 	}
@@ -336,8 +336,12 @@ contract MolVault {
 	    owners = _newOwners;
 	}
 	
-	function transferVaultTokens(address payable _recipient, uint256 _amount) public onlyOwners{
-	    vaultShares.transfer(_recipient, _amount);
+	function updateAirdrop(uint256 amount) public onlyOwners {
+	    airdrop = amount;
+	}
+	
+	function transferVaultShares(address payable _recipient, uint256 _amount) public onlyOwners{
+	    vaultShares.transferFrom(vault, _recipient, _amount);
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
