@@ -1,6 +1,35 @@
 pragma solidity ^0.6.0;
 /// SPDX-License-Identifier: GPL-3.0-or-later
 
+library SafeMath { // arithmetic wrapper for unit under/overflow check
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        uint256 c = a + b;
+        require(c >= a);
+        return c;
+    }
+    
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b <= a);
+        uint256 c = a - b;
+        return c;
+    }
+    
+    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0) {
+            return 0;
+        }
+        uint256 c = a * b;
+        require(c / a == b);
+        return c;
+    }
+
+    function div(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b > 0);
+        uint256 c = a / b;
+        return c;
+    }
+}
+
 interface IERC721 {
     function ownerOf(uint256 tokenId) external view returns (address owner);
     function transferFrom(address from, address to, uint256 tokenId) external;
@@ -29,6 +58,7 @@ library Utilities {
 }
 
 contract MolVault {
+    using SafeMath for uint256;
     address vault = address(this);
     address payable[] public owners;
     address[] public whitelist;
@@ -39,9 +69,9 @@ contract MolVault {
     uint8 public numSaleConfirmations;
     uint256 public bid = 0;
     uint256 public gammaSupply = 0;
-    uint256 public goal = 100000000000000000;
-    uint256 public goalPerc = 100;
-    uint256 public lockPeriod = 100;
+    uint256 public fundingGoal;
+    uint256 public fundingGoalPerc = 100;
+    uint256 public lockPeriod;
     uint256 public lockStartTime;
     
     GAMMA public gamma = new GAMMA();
@@ -51,7 +81,7 @@ contract MolVault {
     string public name;
     string public symbol;
     uint256 public airdrop;
-    uint256 public totalShares = 1000000000000000000000000;
+    uint256 public totalShares;
     uint8 public didMintShares = 0;
     address payable[] public fundingCollectors;
     
@@ -69,7 +99,7 @@ contract MolVault {
     mapping (address => bool) public saleConfirmed;
     mapping (address => uint) public fundingCollectorPerc;
 
-    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol) public {
+    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal, uint256 _totalShares, uint256 _lockPeriod) public {
         require(_owners.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length, "invalid number of required confirmations");
 
@@ -90,6 +120,9 @@ contract MolVault {
         
         name = _name;
         symbol = _symbol;
+        fundingGoal = _fundingGoal;
+        totalShares = _totalShares;
+        lockPeriod = _lockPeriod;
     }
     
     modifier onlyOwners() {
@@ -143,24 +176,23 @@ contract MolVault {
     function purchase(address _tokenAddress, uint256 _tokenId) public payable {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
-        // require(sale[tokenKey].ethPrice == msg.value, "!price");
         require(!isOwner[msg.sender], "Owners cannot buy!");
         
-        uint256 fee = sale[tokenKey].ethPrice * 3 / 1000;
+        uint256 fee = sale[tokenKey].ethPrice.mul(3).div(1000);
         require((sale[tokenKey].ethPrice + fee) == msg.value, "!price");
         
-        if (goalPerc > 0) {
+        if (fundingGoalPerc > 0) {
             // check if fundingCollector 
             if (fundingCollectorPerc[msg.sender] == 0) {
                fundingCollectors.push(msg.sender); 
-               uint perc = msg.value * 100 / goal; 
+               uint perc = msg.value.mul(100).div(fundingGoal); 
             
-               if (perc > goalPerc) {
-                   fundingCollectorPerc[msg.sender] = goalPerc;
-                   goalPerc = 0;
+               if (perc > fundingGoalPerc) {
+                   fundingCollectorPerc[msg.sender] = fundingGoalPerc;
+                   fundingGoalPerc = 0;
                } else {
                    fundingCollectorPerc[msg.sender] = perc;
-                   goalPerc = goalPerc - perc;
+                   fundingGoalPerc = fundingGoalPerc - perc;
                }
             }
             (bool success, ) = vault.call{value: msg.value}("");
