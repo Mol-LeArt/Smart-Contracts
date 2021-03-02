@@ -1,4 +1,5 @@
 pragma solidity ^0.6.0;
+pragma experimental ABIEncoderV2;
 /// SPDX-License-Identifier: GPL-3.0-or-later
 
 library SafeMath { // arithmetic wrapper for unit under/overflow check
@@ -182,7 +183,7 @@ contract MolVault {
     using SafeMath for uint256;
     address vault = address(this);
     address payable[] public owners;
-    address[] public whitelist;
+    address payable[] public whitelist;
     address payable[] public newOwners;
     address payable public bidder;
     uint8 public numConfirmationsRequired;
@@ -194,19 +195,18 @@ contract MolVault {
     uint256 public fundingGoalPerc = 100;
     uint256 public lockPeriod;
     uint256 public lockStartTime;
+    bytes[] public depositTokens;
     
     GAMMA public gamma = new GAMMA();
     
     // Vault Shares
     LiteToken vaultShares;
-    string public name;
-    string public symbol;
-    uint256 public airdrop;
-    uint256 public totalShares;
+    uint256 public airdrop = 100000000000000000000;
     uint8 public didMintShares = 0;
     address payable[] public fundingCollectors;
     
     struct Sale {
+        address sender;
         uint8 forSale; // 1 = sale active, 0 = sale inactive
         uint256 ethPrice;
         uint256 tokenPrice;
@@ -220,7 +220,7 @@ contract MolVault {
     mapping (address => bool) public saleConfirmed;
     mapping (address => uint) public fundingCollectorPerc;
 
-    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal, uint256 _totalShares, uint256 _lockPeriod) public {
+    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal, uint256 _lockPeriod) public {
         require(_owners.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length, "invalid number of required confirmations");
 
@@ -238,12 +238,9 @@ contract MolVault {
         }
 
         numConfirmationsRequired = _numConfirmationsRequired;
-        
-        name = _name;
-        symbol = _symbol;
         fundingGoal = _fundingGoal;
-        totalShares = _totalShares;
         lockPeriod = _lockPeriod;
+        vaultShares = new LiteToken(_name, _symbol, 18, vault, 0, 1000000000000000000000000, false);
     }
     
     modifier onlyOwners() {
@@ -261,9 +258,11 @@ contract MolVault {
         gamma.mint(_ethPrice, _tokenURI, _forSale);
         bytes memory tokenKey = getTokenKey(address(gamma), gammaSupply);
         NFTs[tokenKey] = true;
+        sale[tokenKey].sender = msg.sender;
         sale[tokenKey].ethPrice = _ethPrice;
         sale[tokenKey].tokenPrice = _tokenPrice;
         sale[tokenKey].forSale = _forSale;
+        vaultShares.mint(msg.sender, airdrop.mul(2)); 
     }
     
     function deposit(
@@ -277,19 +276,29 @@ contract MolVault {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         
         // Deposit NFT
+        depositTokens.push(tokenKey);
         NFTs[tokenKey] = true;
         IERC721(_tokenAddress).transferFrom(msg.sender, vault, _tokenId);
     
         // Set sale status
+        sale[tokenKey].sender = msg.sender;
         sale[tokenKey].ethPrice = _ethPrice;
         sale[tokenKey].tokenPrice = _tokenPrice;
         sale[tokenKey].forSale = _forSale;  
 	}
     
-    function distributeFee(uint256 fee) private {
+    function distributeFeeToFundingCollectors(uint256 fee) private {
         for (uint i = 0; i < fundingCollectors.length; i++) {
-            uint split = fee * fundingCollectorPerc[fundingCollectors[i]] / 100;
+            uint split = (fundingCollectorPerc[fundingCollectors[i]].mul(fee)).div(100);
             (bool success, ) = fundingCollectors[i].call{value: split}("");
+            require(success, "!transfer");
+        }
+    }
+    
+    function distributeFeeToWhitelist(uint256 fee) private {
+        for (uint i = 0; i < whitelist.length; i++) {
+            uint split = fee.mul(100).div(7);
+            (bool success, ) = whitelist[i].call{value: split}("");
             require(success, "!transfer");
         }
     }
@@ -297,10 +306,12 @@ contract MolVault {
     function purchase(address _tokenAddress, uint256 _tokenId) public payable {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
+        require(sale[tokenKey].sender != msg.sender, 'Sender cannot buy!');
         require(!isOwner[msg.sender], "Owners cannot buy!");
         
-        uint256 fee = sale[tokenKey].ethPrice.mul(3).div(1000);
-        require((sale[tokenKey].ethPrice + fee) == msg.value, "!price");
+        uint256 feeToFundingCollector = sale[tokenKey].ethPrice.mul(5).div(1000);
+        uint256 feeToWhitelist = sale[tokenKey].ethPrice.mul(5).div(1000);
+        require((sale[tokenKey].ethPrice + feeToFundingCollector + feeToWhitelist) == msg.value, "!price");
         
         if (fundingGoalPerc > 0) {
             // check if fundingCollector 
@@ -316,11 +327,10 @@ contract MolVault {
                    fundingGoalPerc = fundingGoalPerc - perc;
                }
             }
-            (bool success, ) = vault.call{value: msg.value}("");
+            (bool success, ) = vault.call{value: sale[tokenKey].ethPrice}("");
             require(success, "!transfer");
         } else {
             if (didMintShares == 0) {
-                vaultShares = new LiteToken(name, symbol, 18, vault, totalShares, totalShares, true);    
                 lockStartTime = block.timestamp;
                 didMintShares = 1;
             }
@@ -328,39 +338,37 @@ contract MolVault {
             (bool success, ) = vault.call{value: sale[tokenKey].ethPrice}("");
             require(success, "!transfer");
             
-            distributeFee(fee);
-            vaultShares.transferFrom(vault, msg.sender, airdrop);
+            distributeFeeToFundingCollectors(feeToFundingCollector);
+            distributeFeeToWhitelist(feeToWhitelist);
+            vaultShares.mint(msg.sender, airdrop);
         }
         
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
         sale[tokenKey].forSale = 0;
+        NFTs[tokenKey] = false;
     }
     
     function tokenPurchase(address _tokenAddress, uint256 _tokenId) public payable {
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
-        require(vaultShares.balanceOf(msg.sender) > sale[tokenKey].tokenPrice, "!price");
+        require(vaultShares.balanceOf(msg.sender) >= sale[tokenKey].tokenPrice, "!price");
         require(!isOwner[msg.sender], "Owners cannot buy!");
-        require(didMintShares == 1, "No shares minted yet!");
-        
+
+        vaultShares.updateTransferability(true);
         vaultShares.transferFrom(msg.sender, vault, sale[tokenKey].tokenPrice); 
+        vaultShares.updateTransferability(false);
+        
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
         sale[tokenKey].forSale == 0;
+        NFTs[tokenKey] = false;
     }
     
     function updateSale(address _tokenAddress, uint256 _tokenId, uint256 _ethPrice, uint256 _tokenPrice, uint8 _forSale) public {
-        require(isOwner[msg.sender], "Not owner of GAMMA!");
         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
-        
-        // Set sale status
-        if (didMintShares == 0) {
-            sale[tokenKey].ethPrice = _ethPrice;
-            sale[tokenKey].forSale = _forSale;  
-        } else {
-            sale[tokenKey].ethPrice = _ethPrice;
-            sale[tokenKey].tokenPrice = _tokenPrice;
-            sale[tokenKey].forSale = _forSale;  
-        }
+        require(sale[tokenKey].sender == msg.sender, "!sender");
+        sale[tokenKey].ethPrice = _ethPrice;
+        sale[tokenKey].tokenPrice = _tokenPrice;
+        sale[tokenKey].forSale = _forSale;  
     }
     
     function confirmSale() public onlyOwners {
@@ -450,9 +458,9 @@ contract MolVault {
 	    }
 	}
 	
-	function addToWhitelist(address[] memory _address) public onlyOwners {
+	function addToWhitelist(address payable[] memory _address) public onlyOwners {
 	    for (uint8 i = 0; i < _address.length; i++) {
-	        address newAddress = _address[i];
+	        address payable newAddress = _address[i];
 	        require(!isWhitelisted[newAddress], "Already whitelisted!");
 	        isWhitelisted[newAddress] = true;
 	        whitelist.push(newAddress);
@@ -481,21 +489,36 @@ contract MolVault {
 	    return roster;
 	}
 	
+	function getFundingColectors() public view returns (address[] memory) {
+	    address[] memory funders = new address[](fundingCollectors.length);
+	    for (uint i = 0; i < fundingCollectors.length; i++) {
+	        funders[i] = fundingCollectors[i];
+	    }
+	    return funders;
+	}
+	
+	function getNewOwners() public view returns (address[] memory) {
+	    address[] memory nOwners = new address[](newOwners.length);
+	    for (uint i = 0; i < newOwners.length; i++) {
+	        nOwners[i] = newOwners[i];
+	    }
+	    return nOwners;
+	}
+	
+	function getDepositTokens() public view returns (bytes[] memory) {
+	    bytes[] memory tokens = new bytes[](depositTokens.length);
+	    for (uint i = 0; i < depositTokens.length; i++) {
+	        tokens[i] = depositTokens[i];
+	    }    
+	    return tokens;
+	}
+	
 	function removeGamma(address _tokenAddress, uint256 _tokenId) public onlyOwners {
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
 	}
 	
-	function updateOwners(address payable[] memory _newOwners) public onlyOwners {
-	    owners = _newOwners;
-	}
-	
 	function updateAirdrop(uint256 amount) public onlyOwners {
 	    airdrop = amount;
-	}
-	
-	// consider removing this
-	function transferVaultShares(address payable _recipient, uint256 _amount) public onlyOwners{
-	    vaultShares.transferFrom(vault, _recipient, _amount);
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
