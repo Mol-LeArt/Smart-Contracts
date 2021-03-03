@@ -189,12 +189,10 @@ contract MolVault {
     uint8 public numConfirmationsRequired;
     uint8 public numWithdrawalConfirmations;
     uint8 public numSaleConfirmations;
-    uint256 public bid = 0;
-    uint256 public gammaSupply = 0;
+    uint256 public bid;
+    uint256 public gammaSupply;
     uint256 public fundingGoal;
     uint256 public fundingGoalPerc = 100;
-    uint256 public lockPeriod;
-    uint256 public lockStartTime;
     bytes[] public depositTokens;
     
     GAMMA public gamma = new GAMMA();
@@ -202,8 +200,12 @@ contract MolVault {
     // Vault Shares
     LiteToken vaultShares;
     uint256 public airdrop = 100000000000000000000;
-    uint8 public didMintShares = 0;
+    uint8 public isFunded;
     address payable[] public fundingCollectors;
+    
+    // Fees
+    uint8 public percFeeToFundingCollectors = 5;
+    uint8 public percFeeToWhitelist = 5;
     
     struct Sale {
         address sender;
@@ -220,7 +222,7 @@ contract MolVault {
     mapping (address => bool) public saleConfirmed;
     mapping (address => uint) public fundingCollectorPerc;
 
-    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal, uint256 _lockPeriod) public {
+    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal) public {
         require(_owners.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length, "invalid number of required confirmations");
 
@@ -239,7 +241,6 @@ contract MolVault {
 
         numConfirmationsRequired = _numConfirmationsRequired;
         fundingGoal = _fundingGoal;
-        lockPeriod = _lockPeriod;
         vaultShares = new LiteToken(_name, _symbol, 18, vault, 0, 1000000000000000000000000, false);
     }
     
@@ -297,7 +298,7 @@ contract MolVault {
     
     function distributeFeeToWhitelist(uint256 fee) private {
         for (uint i = 0; i < whitelist.length; i++) {
-            uint split = fee.mul(100).div(7);
+            uint split = fee.div(whitelist.length);
             (bool success, ) = whitelist[i].call{value: split}("");
             require(success, "!transfer");
         }
@@ -309,9 +310,9 @@ contract MolVault {
         require(sale[tokenKey].sender != msg.sender, 'Sender cannot buy!');
         require(!isOwner[msg.sender], "Owners cannot buy!");
         
-        uint256 feeToFundingCollector = sale[tokenKey].ethPrice.mul(5).div(1000);
-        uint256 feeToWhitelist = sale[tokenKey].ethPrice.mul(5).div(1000);
-        require((sale[tokenKey].ethPrice + feeToFundingCollector + feeToWhitelist) == msg.value, "!price");
+        uint256 feeToFundingCollectors = sale[tokenKey].ethPrice.mul(percFeeToFundingCollectors).div(1000);
+        uint256 feeToWhitelist = sale[tokenKey].ethPrice.mul(percFeeToWhitelist).div(1000);
+        require((sale[tokenKey].ethPrice + feeToFundingCollectors + feeToWhitelist) == msg.value, "!price");
         
         if (fundingGoalPerc > 0) {
             // check if fundingCollector 
@@ -330,15 +331,12 @@ contract MolVault {
             (bool success, ) = vault.call{value: sale[tokenKey].ethPrice}("");
             require(success, "!transfer");
         } else {
-            if (didMintShares == 0) {
-                lockStartTime = block.timestamp;
-                didMintShares = 1;
-            }
+            isFunded = 1;
 
             (bool success, ) = vault.call{value: sale[tokenKey].ethPrice}("");
             require(success, "!transfer");
             
-            distributeFeeToFundingCollectors(feeToFundingCollector);
+            distributeFeeToFundingCollectors(feeToFundingCollectors);
             distributeFeeToWhitelist(feeToWhitelist);
             vaultShares.mint(msg.sender, airdrop);
         }
@@ -443,8 +441,7 @@ contract MolVault {
 	}
 	
 	function executeWithdrawal() public onlyOwners {
-	    require(now > lockStartTime + lockPeriod, "Time-locked");
-	    require(didMintShares == 1, "Vault shares not minted!");
+	    require(isFunded == 1, "Vault shares not minted!");
 	    require(numWithdrawalConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
 	    
         uint256 cut = (address(this).balance / owners.length);
@@ -519,6 +516,11 @@ contract MolVault {
 	
 	function updateAirdrop(uint256 amount) public onlyOwners {
 	    airdrop = amount;
+	}
+	
+	function updateFeeDistribution(uint8 _percFeeToFundingCollectors, uint8 _percFeeToWhitelist) public onlyOwners {
+	    percFeeToFundingCollectors = _percFeeToFundingCollectors;
+	    percFeeToWhitelist = _percFeeToWhitelist;
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
