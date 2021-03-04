@@ -301,6 +301,7 @@ contract MolVault {
     // Vault Shares
     LiteToken vaultShares;
     uint256 public airdrop = 100000000000000000000;
+    uint256 public circulatedShares;
     uint8 public isFunded;
     address payable[] public fundingCollectors;
     
@@ -367,6 +368,7 @@ contract MolVault {
         sale[tokenKey].tokenPrice = _tokenPrice;
         sale[tokenKey].forSale = _forSale;
         vaultShares.mint(msg.sender, airdrop.mul(2)); 
+        circulatedShares += airdrop.mul(2);
     }
     
 //     function deposit(
@@ -442,6 +444,7 @@ contract MolVault {
             distributeFeeToFundingCollectors(feeToFundingCollectors);
             distributeFeeToWhitelist(feeToWhitelist);
             vaultShares.mint(msg.sender, airdrop);
+            circulatedShares += airdrop;
         }
         
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
@@ -485,7 +488,7 @@ contract MolVault {
 	}
     
     function bidVault(address payable[] memory _newOwners) public payable {
-        require(msg.value > bid, "You must bid higher than the existing bid!"); // tricky 
+        require(msg.value > bid, 'You must bid higher than the existing bid!'); 
         require(_newOwners.length > 0, "There must be at least one new owner!");
         
         (bool success, ) = bidder.call{value: bid}("");
@@ -494,6 +497,17 @@ contract MolVault {
         bidder = msg.sender;
         bid = msg.value;
         bidOwners = _newOwners;
+    }
+    
+    function withdrawBid() public {
+        require(bidder == msg.sender, '!bidder');
+        
+        (bool success, ) = bidder.call{value: bid}("");
+        require(success, "!transfer");
+        
+        bidder = msg.sender;
+        bid = 0;
+        bidOwners = [address(0)];
     }
     
     function sellVault() public onlyOwners {
@@ -670,6 +684,21 @@ contract MolVault {
         for (uint8 i = 0; i < proposedOwners.length; i++) {
             proposedOwners[i] = address(0);
         }
+	}
+	
+	function redeemFunds() public onlyWhitelisted {
+	    require(vaultShares.balanceOf(msg.sender) > 0, 'No vaultShares to redeem!');
+	    require(isFunded == 1, 'Vault not funded!');
+	    uint256 availableFunds = address(this).balance.sub(fundingGoal);
+	    uint256 prorata = (vaultShares.balanceOf(msg.sender)).mul(100).div(circulatedShares);
+	    (bool success, ) = msg.sender.call{value: availableFunds.mul(prorata).div(100)}("");
+	    require(success, "!transfer");
+	    
+	    vaultShares.updateTransferability(true);
+        vaultShares.transferFrom(msg.sender, vault, vaultShares.balanceOf(msg.sender)); 
+        vaultShares.updateTransferability(false);
+        
+        circulatedShares -= vaultShares.balanceOf(msg.sender);
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
