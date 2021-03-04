@@ -56,14 +56,19 @@ library Utilities {
     	b = new bytes(32);
     	assembly { mstore(add(b, 32), x) }
 	}
+	
+	function append(string memory a, string memory b) internal pure returns (string memory) {
+        return string(abi.encodePacked(a, b));
+    }
 }
 
 contract GAMMA { // Γ - mv - NFT - mkt - γ
-    address payable public dao = 0x057e820D740D5AAaFfa3c6De08C5c98d990dB00d;
+    using SafeMath for uint256;
     uint256 public constant GAMMA_MAX = 5772156649015328606065120900824024310421;
     uint256 public totalSupply;
     string public name = "GAMMA";
     string public symbol = "GAMMA";
+    string public gRoyaltiesURI;
     mapping(address => uint256) public balanceOf;
     mapping(uint256 => address) public getApproved;
     mapping(uint256 => address) public ownerOf;
@@ -73,6 +78,7 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
     mapping(bytes4 => bool) public supportsInterface; // eip-165 
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     mapping(address => mapping(uint256 => uint256)) public tokenOfOwnerByIndex;
+    mapping(uint256 => address payable) public gRoyaltiesByTokenId;
     event Approval(address indexed approver, address indexed spender, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -81,17 +87,18 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         uint256 ethPrice;
         uint8 forSale;
     }
-    constructor () public {
+    constructor (string memory _gRoyaltiesURI) public {
         supportsInterface[0x80ac58cd] = true; // ERC721 
         supportsInterface[0x5b5e139f] = true; // METADATA
         supportsInterface[0x780e9d63] = true; // ENUMERABLE
+        gRoyaltiesURI = _gRoyaltiesURI;
     }
     function approve(address spender, uint256 tokenId) external {
         require(msg.sender == ownerOf[tokenId] || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/operator");
         getApproved[tokenId] = spender;
         emit Approval(msg.sender, spender, tokenId); 
     }
-    function mint(uint256 ethPrice, string calldata _tokenURI, uint8 forSale) external { 
+    function mint(uint256 ethPrice, string calldata _tokenURI, uint8 forSale, address creator) external { 
         totalSupply++;
         require(totalSupply <= GAMMA_MAX, "maxed");
         uint256 tokenId = totalSupply;
@@ -102,16 +109,28 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         sale[tokenId].ethPrice = ethPrice;
         sale[tokenId].forSale = forSale;
         tokenOfOwnerByIndex[msg.sender][tokenId - 1] = tokenId;
+        
+        // mint royalties token and transfer to artist
+        gRoyalties g = new gRoyalties();
+        g.mint(Utilities.append(name, " Royalties Token"), gRoyaltiesURI);
+        g.transfer(creator, 1);
+        gRoyaltiesByTokenId[tokenId] = address(g);
+        
         emit Transfer(address(0), msg.sender, tokenId); 
         emit UpdateSale(ethPrice, tokenId, forSale);
     }
     function purchase(uint256 tokenId) payable external {
         require(msg.value == sale[tokenId].ethPrice, "!ethPrice");
         require(sale[tokenId].forSale == 1, "!forSale");
-        address owner = ownerOf[tokenId];
-        (bool success, ) = owner.call{value: msg.value}("");
+
+        uint256 royalties = sale[tokenId].ethPrice.div(10);
+        (bool success, ) = gRoyaltiesByTokenId[tokenId].call{value: royalties}("");
         require(success, "!transfer");
-        _transfer(owner, msg.sender, tokenId);
+        
+        uint256 payout = sale[tokenId].ethPrice.sub(royalties);
+        (success, ) = ownerOf[tokenId].call{value: payout}("");
+        require(success, "!transfer");
+        _transfer(ownerOf[tokenId], msg.sender, tokenId);
     }
     function setApprovalForAll(address operator, bool approved) external {
         isApprovedForAll[msg.sender][operator] = approved;
@@ -142,18 +161,98 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         require(msg.sender == ownerOf[tokenId] || getApproved[tokenId] == msg.sender || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/spender/operator");
         _transfer(from, to, tokenId);
     }
-    function updateDao(address payable _dao) external {
-        require(msg.sender == dao, "!dao");
-        dao = _dao;
-    }
+    
     function updateSale(uint256 ethPrice, uint256 tokenId, uint8 forSale) payable external {
         require(msg.sender == ownerOf[tokenId], "!owner");
         sale[tokenId].ethPrice = ethPrice;
         sale[tokenId].forSale = forSale;
-        (bool success, ) = dao.call{value: msg.value}("");
-        require(success, "!transfer");
         emit UpdateSale(ethPrice, tokenId, forSale);
     }
+}
+
+contract gRoyalties { // Γ - mv - NFT - mkt - γ
+    uint256 public totalSupply = 1;
+    string public name;
+    string public symbol= "gRoyalties";
+    mapping(address => uint256) public balanceOf;
+    mapping(uint256 => address) public getApproved;
+    mapping(uint256 => address) public ownerOf;
+    mapping(uint256 => uint256) public tokenByIndex;
+    mapping(uint256 => string) public tokenURI;
+    mapping(uint256 => Sale) public sale;
+    mapping(bytes4 => bool) public supportsInterface; // eip-165 
+    mapping(address => mapping(address => bool)) public isApprovedForAll;
+    mapping(address => mapping(uint256 => uint256)) public tokenOfOwnerByIndex;
+    event Approval(address indexed approver, address indexed spender, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    event UpdateSale(uint256 indexed ethPrice, uint256 indexed tokenId, bool forSale);
+    struct Sale {
+        uint256 ethPrice;
+        bool forSale;
+    }
+    constructor () public {
+        supportsInterface[0x80ac58cd] = true; // ERC721 
+        supportsInterface[0x5b5e139f] = true; // METADATA
+        supportsInterface[0x780e9d63] = true; // ENUMERABLE
+    }
+    function approve(address spender, uint256 tokenId) external {
+        require(msg.sender == ownerOf[tokenId] || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/operator");
+        getApproved[tokenId] = spender;
+        emit Approval(msg.sender, spender, tokenId); 
+    }
+    function mint(string calldata _name, string calldata _tokenURI) external { 
+        name = _name;
+        // use totalSupply as tokenId
+        balanceOf[msg.sender]++;
+        ownerOf[totalSupply] = msg.sender;
+        tokenByIndex[totalSupply - 1] = totalSupply;
+        tokenURI[totalSupply] = _tokenURI;
+        tokenOfOwnerByIndex[msg.sender][totalSupply - 1] = totalSupply;
+        emit Transfer(address(0), msg.sender, totalSupply); 
+    }
+    function purchase(uint256 tokenId) payable external {
+        require(msg.value == sale[tokenId].ethPrice, "!ethPrice");
+        require(sale[tokenId].forSale, "!forSale");
+        (bool success, ) = ownerOf[tokenId].call{value: msg.value}("");
+        require(success, "!transfer");
+        _transfer(ownerOf[tokenId], msg.sender, tokenId);
+    }
+    function setApprovalForAll(address operator, bool approved) external {
+        isApprovedForAll[msg.sender][operator] = approved;
+        emit ApprovalForAll(msg.sender, operator, approved);
+    }
+    function _transfer(address from, address to, uint256 tokenId) internal {
+        balanceOf[from]--; 
+        balanceOf[to]++; 
+        getApproved[tokenId] = address(0);
+        ownerOf[tokenId] = to;
+        sale[tokenId].forSale = false;
+        tokenOfOwnerByIndex[from][tokenId - 1] = 0;
+        tokenOfOwnerByIndex[to][tokenId - 1] = tokenId;
+        emit Transfer(from, to, tokenId); 
+    }
+    function transfer(address to, uint256 tokenId) external {
+        require(msg.sender == ownerOf[tokenId], "!owner");
+        _transfer(msg.sender, to, tokenId);
+    }
+    function transferFrom(address from, address to, uint256 tokenId) external {
+        require(msg.sender == ownerOf[tokenId] || getApproved[tokenId] == msg.sender || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/spender/operator");
+        _transfer(from, to, tokenId);
+    }
+    function updateSale(uint256 ethPrice, uint256 tokenId, bool forSale) payable external {
+        require(msg.sender == ownerOf[tokenId], "!owner");
+        sale[tokenId].ethPrice = ethPrice;
+        sale[tokenId].forSale = forSale;
+        emit UpdateSale(ethPrice, tokenId, forSale);
+    }
+    function withdraw() payable public {
+        require(msg.sender == ownerOf[totalSupply], "!owner");
+        (bool success, ) = msg.sender.call{value: address(this).balance}("");
+        require(success, "!transfer");        
+    }
+    
+    receive() external payable {  require(msg.data.length ==0); }
 }
 
 contract LiteToken { // minimal viable erc20 token with common extensions, such as burn, cap, mint, pauseable, admin functions
@@ -184,18 +283,20 @@ contract MolVault {
     address vault = address(this);
     address payable[] public owners;
     address payable[] public whitelist;
-    address payable[] public newOwners;
+    address payable[] public bidOwners;
+    address payable[] public proposedOwners;
     address payable public bidder;
     uint8 public numConfirmationsRequired;
     uint8 public numWithdrawalConfirmations;
     uint8 public numSaleConfirmations;
+    uint8 public numProposedOwnersConfirmations;
     uint256 public bid;
     uint256 public gammaSupply;
     uint256 public fundingGoal;
     uint256 public fundingGoalPerc = 100;
-    bytes[] public depositTokens;
+    // bytes[] public depositTokens;
     
-    GAMMA public gamma = new GAMMA();
+    GAMMA public gamma;
     
     // Vault Shares
     LiteToken vaultShares;
@@ -220,9 +321,10 @@ contract MolVault {
     mapping (address => bool) public isWhitelisted;
     mapping (address => bool) public withdrawalConfirmed;
     mapping (address => bool) public saleConfirmed;
+    mapping (address => bool) public proposedOwnersConfirmed;
     mapping (address => uint) public fundingCollectorPerc;
 
-    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal) public {
+    constructor(address payable[] memory _owners, uint8 _numConfirmationsRequired, string memory _name, string memory _symbol, uint256 _fundingGoal, string memory _gRoyaltiesURI) public {
         require(_owners.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _owners.length, "invalid number of required confirmations");
 
@@ -242,6 +344,7 @@ contract MolVault {
         numConfirmationsRequired = _numConfirmationsRequired;
         fundingGoal = _fundingGoal;
         vaultShares = new LiteToken(_name, _symbol, 18, vault, 0, 1000000000000000000000000, false);
+        gamma = new GAMMA(_gRoyaltiesURI);
     }
     
     modifier onlyOwners() {
@@ -256,7 +359,7 @@ contract MolVault {
     
     function mint(uint256 _ethPrice, uint256 _tokenPrice, string memory _tokenURI, uint8 _forSale) public onlyWhitelisted{
         gammaSupply++;
-        gamma.mint(_ethPrice, _tokenURI, _forSale);
+        gamma.mint(_ethPrice, _tokenURI, _forSale, msg.sender);
         bytes memory tokenKey = getTokenKey(address(gamma), gammaSupply);
         NFTs[tokenKey] = true;
         sale[tokenKey].sender = msg.sender;
@@ -266,27 +369,27 @@ contract MolVault {
         vaultShares.mint(msg.sender, airdrop.mul(2)); 
     }
     
-    function deposit(
-        address _tokenAddress, 
-        uint256 _tokenId, 
-        uint256 _ethPrice,
-        uint256 _tokenPrice, 
-        uint8 _forSale) 
-        public onlyWhitelisted {
-		require(IERC721(_tokenAddress).ownerOf(_tokenId) == msg.sender, "!owner");
-        bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
+//     function deposit(
+//         address _tokenAddress, 
+//         uint256 _tokenId, 
+//         uint256 _ethPrice,
+//         uint256 _tokenPrice, 
+//         uint8 _forSale) 
+//         public onlyWhitelisted {
+// 		require(IERC721(_tokenAddress).ownerOf(_tokenId) == msg.sender, "!owner");
+//         bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
         
-        // Deposit NFT
-        depositTokens.push(tokenKey);
-        NFTs[tokenKey] = true;
-        IERC721(_tokenAddress).transferFrom(msg.sender, vault, _tokenId);
+//         // Deposit NFT
+//         depositTokens.push(tokenKey);
+//         NFTs[tokenKey] = true;
+//         IERC721(_tokenAddress).transferFrom(msg.sender, vault, _tokenId);
     
-        // Set sale status
-        sale[tokenKey].sender = msg.sender;
-        sale[tokenKey].ethPrice = _ethPrice;
-        sale[tokenKey].tokenPrice = _tokenPrice;
-        sale[tokenKey].forSale = _forSale;  
-	}
+//         // Set sale status
+//         sale[tokenKey].sender = msg.sender;
+//         sale[tokenKey].ethPrice = _ethPrice;
+//         sale[tokenKey].tokenPrice = _tokenPrice;
+//         sale[tokenKey].forSale = _forSale;  
+// 	}
     
     function distributeFeeToFundingCollectors(uint256 fee) private {
         for (uint i = 0; i < fundingCollectors.length; i++) {
@@ -390,7 +493,7 @@ contract MolVault {
         
         bidder = msg.sender;
         bid = msg.value;
-        newOwners = _newOwners;
+        bidOwners = _newOwners;
     }
     
     function sellVault() public onlyOwners {
@@ -411,7 +514,7 @@ contract MolVault {
         }
         
         // Transition ownership 
-        owners = newOwners;
+        owners = bidOwners;
         
         for (uint8 i = 0; i < owners.length; i++) {
             isOwner[owners[i]] = true;
@@ -428,7 +531,6 @@ contract MolVault {
     }
 	
 	function confirmWithdrawal() public onlyOwners {
-	    // might require didMintShares != 0
 	    require(!withdrawalConfirmed[msg.sender], 'Withdrawal already confirmed!');
 	    numWithdrawalConfirmations++;
 	    withdrawalConfirmed[msg.sender] = true;
@@ -486,7 +588,7 @@ contract MolVault {
 	    return roster;
 	}
 	
-	function getFundingColectors() public view returns (address[] memory) {
+	function getFundingCollectors() public view returns (address[] memory) {
 	    address[] memory funders = new address[](fundingCollectors.length);
 	    for (uint i = 0; i < fundingCollectors.length; i++) {
 	        funders[i] = fundingCollectors[i];
@@ -494,21 +596,29 @@ contract MolVault {
 	    return funders;
 	}
 	
-	function getNewOwners() public view returns (address[] memory) {
-	    address[] memory nOwners = new address[](newOwners.length);
-	    for (uint i = 0; i < newOwners.length; i++) {
-	        nOwners[i] = newOwners[i];
+	function getBidOwners() public view returns (address[] memory) {
+	    address[] memory nOwners = new address[](bidOwners.length);
+	    for (uint i = 0; i < bidOwners.length; i++) {
+	        nOwners[i] = bidOwners[i];
 	    }
 	    return nOwners;
 	}
 	
-	function getDepositTokens() public view returns (bytes[] memory) {
-	    bytes[] memory tokens = new bytes[](depositTokens.length);
-	    for (uint i = 0; i < depositTokens.length; i++) {
-	        tokens[i] = depositTokens[i];
-	    }    
-	    return tokens;
+	function getProposedOwners() public view returns (address[] memory) {
+	    address[] memory nOwners = new address[](proposedOwners.length);
+	    for (uint i = 0; i < proposedOwners.length; i++) {
+	        nOwners[i] = proposedOwners[i];
+	    }
+	    return nOwners;
 	}
+	
+// 	function getDepositTokens() public view returns (bytes[] memory) {
+// 	    bytes[] memory tokens = new bytes[](depositTokens.length);
+// 	    for (uint i = 0; i < depositTokens.length; i++) {
+// 	        tokens[i] = depositTokens[i];
+// 	    }    
+// 	    return tokens;
+// 	}
 	
 	function removeGamma(address _tokenAddress, uint256 _tokenId) public onlyOwners {
         IERC721(_tokenAddress).transferFrom(vault, msg.sender, _tokenId);
@@ -521,6 +631,45 @@ contract MolVault {
 	function updateFeeDistribution(uint8 _percFeeToFundingCollectors, uint8 _percFeeToWhitelist) public onlyOwners {
 	    percFeeToFundingCollectors = _percFeeToFundingCollectors;
 	    percFeeToWhitelist = _percFeeToWhitelist;
+	}
+	
+	// Update community organizers
+	function proposeOwners(address payable[] memory _newOwners) public onlyOwners {
+	    require(_newOwners.length > 0, '!_newOwners');
+	    proposedOwners = _newOwners;
+	}
+	
+	function confirmOwnersUpdate() public onlyOwners {
+	    require(!proposedOwnersConfirmed[msg.sender], 'Already confirmed proposed owners!');
+	    require(proposedOwners.length > 0, '!newProposedOwners');
+	    numProposedOwnersConfirmations++;
+	    proposedOwnersConfirmed[msg.sender] = true;
+	}
+	
+	function revokeOwnersUpdate() public onlyOwners { 
+	    require(proposedOwnersConfirmed[msg.sender], 'Proposed owners not yet confirmed!');
+	    numProposedOwnersConfirmations--;
+	    proposedOwnersConfirmed[msg.sender] = false;
+	}
+	
+	function updateOwners() public onlyOwners {
+	    require(numProposedOwnersConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
+	    
+	    // Clear ownership
+        for (uint8 i = 0; i < owners.length; i++) {
+            isOwner[owners[i]] = false;
+        }
+        
+        // Transition ownership 
+        owners = proposedOwners;
+
+        for (uint8 i = 0; i < owners.length; i++) {
+            isOwner[owners[i]] = true;
+        }
+        
+        for (uint8 i = 0; i < proposedOwners.length; i++) {
+            proposedOwners[i] = address(0);
+        }
 	}
 	
     // Function for getting the document key for a given NFT address + tokenId
