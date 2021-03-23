@@ -434,7 +434,7 @@ contract MolVault {
         
         uint256 feeToFundingCollectors = sale[tokenKey].ethPrice.mul(percFeeToFundingCollectors).div(1000);
         uint256 feeToWhitelist = sale[tokenKey].ethPrice.mul(percFeeToWhitelist).div(1000);
-        require((sale[tokenKey].ethPrice + feeToFundingCollectors + feeToWhitelist) == msg.value, "!price");
+        require((sale[tokenKey].ethPrice.add(feeToFundingCollectors).add(feeToWhitelist)) == msg.value, "!price");
         
         if (fundingGoalPerc > 0) {
             if (fundingCollectorPerc[msg.sender] == 0) {
@@ -716,10 +716,14 @@ contract MolVault {
     }
 	
 	function sellCoins(uint256 _amount) public onlyWhitelisted {
-	    require(revenue > 0, '!revenue');
 	    require(coin.balanceOf(msg.sender) > 0, 'No coin to redeem with!');
 
-	    coinSale[msg.sender] = _amount;
+        if (coinSale[msg.sender] == 0) {
+            coinSale[msg.sender] = _amount;    
+        } else {
+            coinSale[msg.sender] += _amount; 
+        }
+	    
 	    coin.updateTransferability(true);
         coin.transferFrom(msg.sender, vault, _amount); 
         coin.updateTransferability(false);
