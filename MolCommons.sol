@@ -324,7 +324,7 @@ contract MolCommons {
     uint256 public airdrop = 100000000000000000000;
     
     // Fees
-    uint8 public percFeeToCreators = 10;
+    uint8 public percFeeToCreators = 1;
 
     constructor(
         address payable[] memory _organizers, 
@@ -387,33 +387,34 @@ contract MolCommons {
 	// BUY GAMMA //
 	// ********* //
 	
-    function distributeFeeToWhitelist(uint256 fee) private {
+    function distributeFeeToCreators(uint256 fee) private {
+        uint split = fee.div(creators.length);
         for (uint i = 0; i < creators.length; i++) {
-            uint split = fee.div(creators.length);
+            if (!isCreator[creators[i]]) {
+                continue;
+            }
             (bool success, ) = creators[i].call{value: split}("");
             require(success, "!transfer");
         }
     }
     
-    function purchase(address _tokenAddress, uint256 _tokenId) public payable {
-        bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
+    function purchase(uint256 _tokenId) public payable {
+        bytes memory tokenKey = getTokenKey(address(gamma), _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
         require(sale[tokenKey].sender != msg.sender, 'Sender cannot buy!');
         require(!isOrganizer[msg.sender], "Owners cannot buy!");
         
-        uint256 feeToWhitelist = sale[tokenKey].ethPrice.mul(percFeeToWhitelist).div(1000);
-        require((sale[tokenKey].ethPrice.add(feeToWhitelist)) == msg.value, "!price");
+        uint256 feeToCreators = sale[tokenKey].ethPrice.mul(percFeeToCreators).div(100);
+        require((sale[tokenKey].ethPrice.add(feeToCreators)) == msg.value, "!price");
 
         (bool success, ) = commons.call{value: sale[tokenKey].ethPrice}("");
         require(success, "!transfer");
         
-        distributeFeeToWhitelist(feeToWhitelist);
+        distributeFeeToCreators(feeToCreators);
 
-        if (address(gamma) == _tokenAddress) {
-            gamma.updateSale(sale[tokenKey].ethPrice, _tokenId, 0);
-        }
+        gamma.updateSale(sale[tokenKey].ethPrice, _tokenId, 0);
         
-        IERC721(_tokenAddress).transferFrom(commons, msg.sender, _tokenId);
+        IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
         sale[tokenKey].forSale = 0;
         NFTs[tokenKey] = false;
         
@@ -421,8 +422,8 @@ contract MolCommons {
         coin.mint(msg.sender, airdrop);
     }
     
-    function coinPurchase(address _tokenAddress, uint256 _tokenId) public payable {
-        bytes memory tokenKey = getTokenKey(_tokenAddress, _tokenId);
+    function coinPurchase(uint256 _tokenId) public payable {
+        bytes memory tokenKey = getTokenKey(address(gamma), _tokenId);
         require(sale[tokenKey].forSale == 1, "!sale");
         require(coin.balanceOf(msg.sender) >= sale[tokenKey].tokenPrice, "!price");
 
@@ -430,7 +431,7 @@ contract MolCommons {
         coin.transferFrom(msg.sender, sale[tokenKey].sender, sale[tokenKey].tokenPrice); 
         coin.updateTransferability(false);
         
-        IERC721(_tokenAddress).transferFrom(commons, msg.sender, _tokenId);
+        IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
         sale[tokenKey].forSale == 0;
         NFTs[tokenKey] = false;
     }
@@ -563,30 +564,18 @@ contract MolCommons {
 	// ROSTER MANAGEMENT //
 	// ***************** // 
 	
-	function addToWhitelist(address payable[] memory _address) public onlyOrganizers {
-	    for (uint8 i = 0; i < _address.length; i++) {
-	        address payable newAddress = _address[i];
-	        require(!isCreator[newAddress], "Already whitelisted!");
-	        isCreator[newAddress] = true;
-	        creators.push(newAddress);
-	    }
+	function addCreator(address payable _address) public onlyOrganizers {
+        require(!isCreator[_address], "Already whitelisted!");
+        isCreator[_address] = true;
+        creators.push(_address);
 	}
 	
-	function removeFromWhitelist(address[] memory _address) public onlyOrganizers {
-	    for (uint8 i = 0; i < _address.length; i++) {
-	        address newAddress = _address[i];
-	        require(isCreator[newAddress], "No address to remove!");
-	        isCreator[newAddress] = false;
-	        
-	        for (uint8 j = 0; j < creators.length; j++) {
-	            if (newAddress == creators[j]) {
-	                creators[j] = address(0);
-	            }
-	        }
-	    }
+	function removeCreator(address _address) public onlyOrganizers {
+        require(isCreator[_address], "No address to remove!");
+        isCreator[_address] = false;
 	}
 	
-	function getWhitelist() public view returns (address[] memory) {
+	function getCreators() public view returns (address[] memory) {
 	    address[] memory roster = new address[](creators.length);
 	    for (uint i = 0; i < creators.length; i++) {
 	        roster[i] = creators[i];
@@ -599,8 +588,8 @@ contract MolCommons {
 	// *************** // 
 	
 	// ----- Remove Gamma from Commons
-	function removeGamma(address _tokenAddress, uint256 _tokenId) public onlyOrganizers {
-        IERC721(_tokenAddress).transferFrom(commons, msg.sender, _tokenId);
+	function removeGamma(uint256 _tokenId) public onlyOrganizers {
+        IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
 	}
 	
 	// ---- Update aridrop of coins
