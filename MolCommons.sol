@@ -286,24 +286,25 @@ contract MolCommons {
     using SafeMath for uint256;
     
     // Commons
-    uint8 public numConfirmationsRequired;
+    // uint8 public numConfirmationsRequired;
     address commons = address(this);
     address payable[] public organizers;
     mapping (address => bool) public isOrganizer;
+    uint8[3] public confirmations; // [numConfirmationsRequired, numBidConfirmations, numWithdrawalConfirmations]
     
     // Creators
     address payable[] public creators;
     mapping (address => bool) public isCreator;
     
     // Bid
-    uint8 public numBidConfirmations;
+    // uint8 public numBidConfirmations;
     uint256 public bid;
     address payable public bidder;
     address payable[] public newOrganizers;
     mapping (address => bool) public bidConfirmed;
    
     // Withdraw funds
-    uint8 public numWithdrawalConfirmations;
+    // uint8 public numWithdrawalConfirmations;
     mapping (address => bool) public withdrawalConfirmed;
 
     // NFT
@@ -324,15 +325,17 @@ contract MolCommons {
     uint256 public airdrop = 100000000000000000000;
     
     // Fees
-    uint8 public percFeeToCreators = 1;
+    // uint8 public percFeeToCreators = 1;
+    uint8[2] public fees = [1, 1]; // [percFeeToCreators, percFeeToContributors]
+    address payable[] contributors;
 
     constructor(
         address payable[] memory _organizers, 
         uint8 _numConfirmationsRequired, 
         string memory _name, 
         string memory _symbol, 
-        // uint256 _fundingGoal, 
-        string memory _gRoyaltiesURI
+        string memory _gRoyaltiesURI,
+        bool _transferable
         ) public {
         require(_organizers.length > 0, "owners required");
         require(_numConfirmationsRequired > 0 && _numConfirmationsRequired <= _organizers.length, "invalid number of required confirmations");
@@ -350,8 +353,8 @@ contract MolCommons {
             creators.push(org);
         }
 
-        numConfirmationsRequired = _numConfirmationsRequired;
-        coin = new LiteToken(_name, _symbol, 18, commons, 0, 1000000000000000000000000, false);
+        confirmations[0] = _numConfirmationsRequired;
+        coin = new LiteToken(_name, _symbol, 18, commons, 0, 1000000000000000000000000, _transferable);
         gamma = new GAMMA(_gRoyaltiesURI);
     }
     
@@ -387,6 +390,20 @@ contract MolCommons {
 	// BUY GAMMA //
 	// ********* //
 	
+    function distributeFeeToContributors(uint256 fee) private {
+        if (contributors.length == 0) {
+            (bool success, ) = commons.call{value: fee}("");
+            require(success, "!transfer");
+        } else {
+            uint split = fee.div(contributors.length);
+            for (uint i = 0; i < contributors.length; i++) {
+                (bool success, ) = contributors[i].call{value: split}("");
+                require(success, "!transfer");
+            }
+        }
+
+    }
+    
     function distributeFeeToCreators(uint256 fee) private {
         uint split = fee.div(creators.length);
         for (uint i = 0; i < creators.length; i++) {
@@ -404,13 +421,15 @@ contract MolCommons {
         require(sale[tokenKey].sender != msg.sender, 'Sender cannot buy!');
         require(!isOrganizer[msg.sender], "Owners cannot buy!");
         
-        uint256 feeToCreators = sale[tokenKey].ethPrice.mul(percFeeToCreators).div(100);
-        require((sale[tokenKey].ethPrice.add(feeToCreators)) == msg.value, "!price");
+        uint256 feeToCreators = sale[tokenKey].ethPrice.mul(fees[0]).div(100);
+        uint256 feeToContributors = sale[tokenKey].ethPrice.mul(fees[1]).div(100);
+        require((sale[tokenKey].ethPrice.add(feeToCreators).add(feeToContributors)) == msg.value, "!price");
 
         (bool success, ) = commons.call{value: sale[tokenKey].ethPrice}("");
         require(success, "!transfer");
         
         distributeFeeToCreators(feeToCreators);
+        distributeFeeToContributors(feeToContributors);
 
         gamma.updateSale(sale[tokenKey].ethPrice, _tokenId, 0);
         
@@ -486,18 +505,18 @@ contract MolCommons {
     // ----- Bid (admin functions)
     function confirmBid() public onlyOrganizers {
         require(!bidConfirmed[msg.sender], 'Msg.sender already confirmed vault sale!');
-	    numBidConfirmations++;
+	    confirmations[1]++;
 	    bidConfirmed[msg.sender] = true;
 	}
 	
 	function revokeBidConfirmation() public onlyOrganizers {
         require(bidConfirmed[msg.sender], 'Msg.sender did not confirm vault sale!');
-	    numBidConfirmations--;
+	    confirmations[1]--;
 	    bidConfirmed[msg.sender] = false;
 	}
     
     function executeBid() public onlyOrganizers {
-	    require(numBidConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
+	    require(confirmations[1] >= confirmations[0], "!numConfirmationsRequired");
         uint256 cut = (bid / organizers.length);
 
         // Reset sale confirmations
@@ -505,7 +524,7 @@ contract MolCommons {
 	        (bool success, ) = organizers[i].call{value: cut}("");
             require(success, "!transfer");
             bidConfirmed[organizers[i]] = false;
-            numBidConfirmations = 0;
+            confirmations[1] = 0;
 	    }
         
         // Clear ownership
@@ -536,18 +555,18 @@ contract MolCommons {
 	
 	function confirmWithdrawal() public onlyOrganizers {
 	    require(!withdrawalConfirmed[msg.sender], 'Withdrawal already confirmed!');
-	    numWithdrawalConfirmations++;
+	    confirmations[2]++;
 	    withdrawalConfirmed[msg.sender] = true;
 	}
 	
 	function revokeWithdrawal() public onlyOrganizers { 
 	    require(withdrawalConfirmed[msg.sender], 'Withdrawal not confirmed!');
-	    numWithdrawalConfirmations--;
+	    confirmations[2]--;
 	    withdrawalConfirmed[msg.sender] = false;
 	}
 	
 	function executeWithdrawal(uint256 _amount, address payable _address) public onlyOrganizers {
-	    require(numWithdrawalConfirmations >= numConfirmationsRequired, "!numConfirmationsRequired");
+	    require(confirmations[2] >= confirmations[0], "!numConfirmationsRequired");
 	    require(address(this).balance >= _amount, 'Insufficient funds.');
 	    
         (bool success, ) = _address.call{value: _amount}("");
@@ -557,7 +576,7 @@ contract MolCommons {
             withdrawalConfirmed[organizers[i]] = false;
 	    }
 	    
-	    numWithdrawalConfirmations = 0;
+	    confirmations[2] = 0;
 	}
 	
 	// ***************** // 
@@ -598,8 +617,14 @@ contract MolCommons {
 	}
 	
 	// ----- Update distribution of tx fee
-	function updateFeeDistribution(uint8 _percFeeToCreators) public onlyOrganizers {
-	    percFeeToCreators = _percFeeToCreators;
+	function updateFeeDistribution(uint8 _percFeeToCreators, uint8 _percFeeToContributors) public onlyOrganizers {
+	    fees[0] = _percFeeToCreators;
+	    fees[1] = _percFeeToContributors;
+	}
+	
+	// ----- Update contributors
+	function updateContributors(address payable[] memory _contributors) public onlyOrganizers {
+	    contributors = _contributors;
 	}
 	
 	// ----- Update Gamma royalties 
