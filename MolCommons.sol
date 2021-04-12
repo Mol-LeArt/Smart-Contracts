@@ -2,6 +2,8 @@ pragma solidity ^0.6.0;
 pragma experimental ABIEncoderV2;
 /// SPDX-License-Identifier: GPL-3.0-or-later
 
+// import './MolAuction.sol';
+
 library SafeMath { // arithmetic wrapper for unit under/overflow check
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
         uint256 c = a + b;
@@ -36,27 +38,12 @@ interface IERC721 {
     function transferFrom(address from, address to, uint256 tokenId) external;
 }
 
+interface IERC20 {
+    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+}
+
 library Utilities {
-	// concat two bytes objects
-    function concat(bytes memory a, bytes memory b)
-            internal pure returns (bytes memory) {
-        return abi.encodePacked(a, b);
-    }
-
-    // convert address to bytes
-    function toBytes(address x) internal pure returns (bytes memory b) {
-		b = new bytes(20);
-
-		for (uint i = 0; i < 20; i++)
-			b[i] = byte(uint8(uint(x) / (2**(8*(19 - i)))));
-	}
-
-	// convert uint256 to bytes
-	function toBytes(uint256 x) internal pure returns (bytes memory b) {
-    	b = new bytes(32);
-    	assembly { mstore(add(b, 32), x) }
-	}
-	
 	function append(string memory a, string memory b) internal pure returns (string memory) {
         return string(abi.encodePacked(a, b));
     }
@@ -64,6 +51,8 @@ library Utilities {
 
 contract GAMMA { // Γ - mv - NFT - mkt - γ
     using SafeMath for uint256;
+    IERC20 public coin;
+    address public commons;
     uint256 public constant GAMMA_MAX = 5772156649015328606065120900824024310421;
     uint256 public totalSupply;
     uint256 public royalties = 10;
@@ -75,7 +64,7 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
     mapping(uint256 => address) public ownerOf;
     mapping(uint256 => uint256) public tokenByIndex;
     mapping(uint256 => string) public tokenURI;
-    mapping(uint256 => Sale) public sale;
+    mapping(uint256 => Sale) public sales;
     mapping(bytes4 => bool) public supportsInterface; // eip-165 
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     mapping(address => mapping(uint256 => uint256)) public tokenOfOwnerByIndex;
@@ -86,20 +75,23 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
     event UpdateSale(uint256 indexed ethPrice, uint256 indexed tokenId, uint8 forSale);
     struct Sale {
         uint256 ethPrice;
+        uint256 coinPrice;
         uint8 forSale;
     }
-    constructor (string memory _gRoyaltiesURI) public {
+    constructor (string memory _gRoyaltiesURI, address _coin, address _commons) public {
         supportsInterface[0x80ac58cd] = true; // ERC721 
         supportsInterface[0x5b5e139f] = true; // METADATA
         supportsInterface[0x780e9d63] = true; // ENUMERABLE
         gRoyaltiesURI = _gRoyaltiesURI;
+        coin = IERC20(_coin);
+        commons = _commons;
     }
     function approve(address spender, uint256 tokenId) external {
         require(msg.sender == ownerOf[tokenId] || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/operator");
         getApproved[tokenId] = spender;
         emit Approval(msg.sender, spender, tokenId); 
     }
-    function mint(uint256 ethPrice, string calldata _tokenURI, uint8 forSale, address creator) external { 
+    function mint(uint256 ethPrice, uint256 coinPrice, string calldata _tokenURI, uint8 forSale, address creator) external { 
         totalSupply++;
         require(totalSupply <= GAMMA_MAX, "maxed");
         uint256 tokenId = totalSupply;
@@ -107,8 +99,9 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         ownerOf[tokenId] = msg.sender;
         tokenByIndex[tokenId - 1] = tokenId;
         tokenURI[tokenId] = _tokenURI;
-        sale[tokenId].ethPrice = ethPrice;
-        sale[tokenId].forSale = forSale;
+        sales[tokenId].ethPrice = ethPrice;
+        sales[tokenId].coinPrice = coinPrice;
+        sales[tokenId].forSale = forSale;
         tokenOfOwnerByIndex[msg.sender][tokenId - 1] = tokenId;
         
         // mint royalties token and transfer to artist
@@ -121,17 +114,29 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         emit UpdateSale(ethPrice, tokenId, forSale);
     }
     function purchase(uint256 tokenId) payable external {
-        require(msg.value == sale[tokenId].ethPrice, "!ethPrice");
-        require(sale[tokenId].forSale == 1, "!forSale");
+        require(ownerOf[tokenId] == commons, "Must go through commons' purchase function!");
+        require(msg.value == sales[tokenId].ethPrice, "!ethPrice");
+        require(sales[tokenId].forSale == 1, "!forSale");
 
-        uint256 r = sale[tokenId].ethPrice.mul(royalties).div(100);
+        uint256 r = sales[tokenId].ethPrice.mul(royalties).div(100);
         (bool success, ) = gRoyaltiesByTokenId[tokenId].call{value: r}("");
         require(success, "!transfer");
         
-        uint256 payout = sale[tokenId].ethPrice.sub(r);
+        uint256 payout = sales[tokenId].ethPrice.sub(r);
         (success, ) = ownerOf[tokenId].call{value: payout}("");
         require(success, "!transfer");
         _transfer(ownerOf[tokenId], msg.sender, tokenId);
+        
+        sales[tokenId].forSale = 0;
+    }
+    function coinPurchase(uint256 tokenId) external {
+        require(coin.balanceOf(msg.sender) >= sales[tokenId].coinPrice, "!price");
+        require(sales[tokenId].forSale == 1, "!forSale");
+
+        coin.transferFrom(msg.sender, ownerOf[tokenId], sales[tokenId].coinPrice); 
+        
+        _transfer(ownerOf[tokenId], msg.sender, tokenId);
+        sales[tokenId].forSale = 0;
     }
     function setApprovalForAll(address operator, bool approved) external {
         isApprovedForAll[msg.sender][operator] = approved;
@@ -142,7 +147,7 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         balanceOf[to]++; 
         getApproved[tokenId] = address(0);
         ownerOf[tokenId] = to;
-        sale[tokenId].forSale = 0;
+        sales[tokenId].forSale = 0;
         tokenOfOwnerByIndex[from][tokenId - 1] = 0;
         tokenOfOwnerByIndex[to][tokenId - 1] = tokenId;
         emit Transfer(from, to, tokenId); 
@@ -163,11 +168,15 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         _transfer(from, to, tokenId);
     }
     
-    function updateSale(uint256 ethPrice, uint256 tokenId, uint8 forSale) payable external {
+    function updateSale(uint256 ethPrice, uint256 coinPrice, uint256 tokenId, uint8 forSale) payable external {
         require(msg.sender == ownerOf[tokenId], "!owner");
-        sale[tokenId].ethPrice = ethPrice;
-        sale[tokenId].forSale = forSale;
+        sales[tokenId].ethPrice = ethPrice;
+        sales[tokenId].coinPrice = coinPrice;
+        sales[tokenId].forSale = forSale;
         emit UpdateSale(ethPrice, tokenId, forSale);
+    }
+    function getSale(uint256 tokenId) public view returns (uint) {
+        return (sales[tokenId].ethPrice);
     }
     function updateRoyalties(uint256 _royalties) external {
         royalties = _royalties;
@@ -286,7 +295,6 @@ contract MolCommons {
     using SafeMath for uint256;
     
     // Commons
-    // uint8 public numConfirmationsRequired;
     address commons = address(this);
     address payable[] public organizers;
     mapping (address => bool) public isOrganizer;
@@ -297,35 +305,23 @@ contract MolCommons {
     mapping (address => bool) public isCreator;
     
     // Bid
-    // uint8 public numBidConfirmations;
     uint256 public bid;
     address payable public bidder;
     address payable[] public newOrganizers;
     mapping (address => bool) public bidConfirmed;
    
     // Withdraw funds
-    // uint8 public numWithdrawalConfirmations;
     mapping (address => bool) public withdrawalConfirmed;
 
     // NFT
     GAMMA public gamma;
-    uint256 public gammaSupply;
-    mapping (bytes => bool) public NFTs;
-	mapping (bytes => Sale) public sale;
-    
-    struct Sale {
-        address sender;
-        uint8 forSale; // 1 = sale active, 0 = sale inactive
-        uint256 ethPrice;
-        uint256 tokenPrice;
-    }
+	mapping (uint => address) public auctionByTokenId;
     
     // Commons coins
     LiteToken public coin;
     uint256 public airdrop = 100000000000000000000;
     
     // Fees
-    // uint8 public percFeeToCreators = 1;
     uint8[2] public fees = [1, 1]; // [percFeeToCreators, percFeeToContributors]
     address payable[] contributors;
 
@@ -355,7 +351,7 @@ contract MolCommons {
 
         confirmations[0] = _numConfirmationsRequired;
         coin = new LiteToken(_name, _symbol, 18, commons, 0, 1000000000000000000000000, _transferable);
-        gamma = new GAMMA(_gRoyaltiesURI);
+        gamma = new GAMMA(_gRoyaltiesURI, address(coin), commons);
     }
     
     modifier onlyOrganizers() {
@@ -372,16 +368,9 @@ contract MolCommons {
 	// MINT GAMMA //
 	// ********** //
 	
-    function mint(uint256 _ethPrice, uint256 _tokenPrice, string memory _tokenURI, uint8 _forSale) public onlyCreators{
-        gammaSupply++;
-        gamma.mint(_ethPrice, _tokenURI, _forSale, msg.sender);
-        bytes memory tokenKey = getTokenKey(address(gamma), gammaSupply);
-        NFTs[tokenKey] = true;
-        sale[tokenKey].sender = msg.sender;
-        sale[tokenKey].ethPrice = _ethPrice;
-        sale[tokenKey].tokenPrice = _tokenPrice;
-        sale[tokenKey].forSale = _forSale;
-        
+    function mint(uint256 _ethPrice, uint256 _coinPrice, string memory _tokenURI, uint8 _forSale) public onlyCreators{
+        gamma.mint(_ethPrice, _coinPrice, _tokenURI, _forSale, msg.sender);
+
         // Airdrop coin
         coin.mint(msg.sender, airdrop.mul(2)); 
     }
@@ -416,54 +405,23 @@ contract MolCommons {
     }
     
     function purchase(uint256 _tokenId) public payable {
-        bytes memory tokenKey = getTokenKey(address(gamma), _tokenId);
-        require(sale[tokenKey].forSale == 1, "!sale");
-        require(sale[tokenKey].sender != msg.sender, 'Sender cannot buy!');
-        require(!isOrganizer[msg.sender], "Owners cannot buy!");
-        
-        uint256 feeToCreators = sale[tokenKey].ethPrice.mul(fees[0]).div(100);
-        uint256 feeToContributors = sale[tokenKey].ethPrice.mul(fees[1]).div(100);
-        require((sale[tokenKey].ethPrice.add(feeToCreators).add(feeToContributors)) == msg.value, "!price");
+        uint ethPrice = gamma.getSale(_tokenId);
+        uint256 feeToCreators = ethPrice.mul(fees[0]).div(100);
+        uint256 feeToContributors = ethPrice.mul(fees[1]).div(100);
+        require(ethPrice.add(feeToCreators).add(feeToContributors) == msg.value, "!price");
 
-        (bool success, ) = commons.call{value: sale[tokenKey].ethPrice}("");
+        (bool success, ) = commons.call{value: ethPrice}("");
         require(success, "!transfer");
         
         distributeFeeToCreators(feeToCreators);
         distributeFeeToContributors(feeToContributors);
 
-        gamma.updateSale(sale[tokenKey].ethPrice, _tokenId, 0);
+        gamma.updateSale(0, 0, _tokenId, 0);
         
         IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
-        sale[tokenKey].forSale = 0;
-        NFTs[tokenKey] = false;
-        
+
         // Airdrop coin
         coin.mint(msg.sender, airdrop);
-    }
-    
-    function coinPurchase(uint256 _tokenId) public payable {
-        bytes memory tokenKey = getTokenKey(address(gamma), _tokenId);
-        require(sale[tokenKey].forSale == 1, "!sale");
-        require(coin.balanceOf(msg.sender) >= sale[tokenKey].tokenPrice, "!price");
-
-        coin.updateTransferability(true);
-        coin.transferFrom(msg.sender, sale[tokenKey].sender, sale[tokenKey].tokenPrice); 
-        coin.updateTransferability(false);
-        
-        IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
-        sale[tokenKey].forSale == 0;
-        NFTs[tokenKey] = false;
-    }
-    
-    function updateGammaSale(uint256 _tokenId, uint256 _ethPrice, uint256 _tokenPrice, uint8 _forSale) public {
-        bytes memory tokenKey = getTokenKey(address(gamma), _tokenId);
-        require(sale[tokenKey].sender == msg.sender, "!sender");
-        sale[tokenKey].ethPrice = _ethPrice;
-        sale[tokenKey].tokenPrice = _tokenPrice;
-        sale[tokenKey].forSale = _forSale;  
-        
-        // Update sale parameter on MolCommons' Gamma 
-        gamma.updateSale(_ethPrice, _tokenId, _forSale);
     }
     
     // *********** // 
@@ -607,8 +565,8 @@ contract MolCommons {
 	// *************** // 
 	
 	// ----- Remove Gamma from Commons
-	function removeGamma(uint256 _tokenId) public onlyOrganizers {
-        IERC721(address(gamma)).transferFrom(commons, msg.sender, _tokenId);
+	function removeGamma(uint256 _tokenId, address recipient) public onlyOrganizers {
+        IERC721(address(gamma)).transferFrom(commons, recipient, _tokenId);
 	}
 	
 	// ---- Update aridrop of coins
@@ -631,10 +589,11 @@ contract MolCommons {
     function updateRoyalties(uint256 _royalties) public onlyOrganizers {
         gamma.updateRoyalties(_royalties);
     }
-    
-    // ----- Retrieve token key 
-	function getTokenKey(address tokenAddress, uint256 tokenId) public pure returns (bytes memory) {
-		return Utilities.concat(Utilities.toBytes(tokenAddress), Utilities.toBytes(tokenId));
+
+    // ----- Approve contract to transfer gamma
+	function createAuction(uint256 _tokenId, address _contractToTransferGamma) public onlyCreators {
+	    gamma.setApprovalForAll(_contractToTransferGamma, true);
+	    auctionByTokenId[_tokenId] = _contractToTransferGamma;
 	}
 	
     receive() external payable {  require(msg.data.length ==0); }
