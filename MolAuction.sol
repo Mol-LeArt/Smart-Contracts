@@ -4,9 +4,9 @@ pragma solidity ^0.6.0;
 import './MolCommons.sol';
 
 contract MolAuction {
-  
     MolCommons public commons;
     GAMMA public gamma;
+    LiteToken public coin;
     
     struct auction {
         uint256 bid;
@@ -27,9 +27,10 @@ contract MolAuction {
     event WithdrawBid(uint256 tokenId);
     event AcceptBid(uint256 tokenId, uint256 price, address indexed buyer, address indexed creator);
     
-    constructor (MolCommons _commons, GAMMA _gamma) public {
+    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin) public {
         commons = _commons;
         gamma = _gamma;
+        coin = _coin;
     }
     
     function createAuction(uint256 _tokenId, uint256 _reserve) public {
@@ -49,7 +50,7 @@ contract MolAuction {
         emit UpdateAuctionReserve(auctions[_tokenId].reserve);
     }
     
-    function bid(uint256 _tokenId) public payable {
+    function bid(uint256 _tokenId, uint256 _airdropAmount) public payable {
         require(msg.value > auctions[_tokenId].bid, 'You must bid higher than the existing bid!');
         require(auctions[_tokenId].startBlock > 0, '!auction');
         
@@ -58,6 +59,8 @@ contract MolAuction {
         
         auctions[_tokenId].bid = msg.value;
         auctions[_tokenId].bidder = msg.sender;
+        
+        commons.dropCoin(msg.sender, _airdropAmount);
         
         emit UpdateBid(msg.value, msg.sender);
     }
@@ -71,7 +74,7 @@ contract MolAuction {
         emit WithdrawBid(_tokenId);
     }
     
-    function acceptBid(uint256 _tokenId) public {
+    function acceptBid(uint256 _tokenId, uint256 _airdropAmount) public {
         require(msg.sender == auctions[_tokenId].creator, '!creator');
         
         uint256 price = auctions[_tokenId].bid;
@@ -86,6 +89,12 @@ contract MolAuction {
         gamma.updateSale(0, 0, _tokenId, 0);
         gamma.transferFrom(address(commons), buyer, _tokenId);
         
+        commons.dropCoin(auctions[_tokenId].creator, _airdropAmount);
+        
         emit AcceptBid(_tokenId, price, buyer, auctions[_tokenId].creator);
     }
+    
+    // function airdrop(address _recipient, uint256 _amount) public {
+    //     commons.dropCoin(_recipient, _amount);
+    // }
 }
