@@ -51,8 +51,8 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
     uint256 public constant GAMMA_MAX = 5772156649015328606065120900824024310421;
     uint256 public totalSupply;
     uint256 public royalties = 10;
-    string public name = "GAMMA";
-    string public symbol = "GAMMA";
+    string public name;
+    string public symbol;
     string public gRoyaltiesURI;
     mapping(address => uint256) public balanceOf;
     mapping(uint256 => address) public getApproved;
@@ -74,10 +74,12 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
         uint8 forSale;
         address minter;
     }
-    constructor (string memory _gRoyaltiesURI, address _coin, address payable _commons) public {
+    constructor (string memory _name, string memory _symbol, string memory _gRoyaltiesURI, address _coin, address payable _commons) public {
         supportsInterface[0x80ac58cd] = true; // ERC721 
         supportsInterface[0x5b5e139f] = true; // METADATA
         supportsInterface[0x780e9d63] = true; // ENUMERABLE
+        name = _name;
+        symbol = _symbol;
         gRoyaltiesURI = _gRoyaltiesURI;
         coin = LiteToken(_coin);
         commons = MolCommons(_commons);
@@ -175,7 +177,7 @@ contract GAMMA { // Γ - mv - NFT - mkt - γ
     }
     
     function updateSale(uint256 ethPrice, uint256 coinPrice, uint256 tokenId, uint8 forSale) external {
-        require(msg.sender == ownerOf[tokenId], "!owner");
+        require(msg.sender == ownerOf[tokenId] || isApprovedForAll[ownerOf[tokenId]][msg.sender], "!owner/operator");
         sales[tokenId].ethPrice = ethPrice;
         sales[tokenId].coinPrice = coinPrice;
         sales[tokenId].forSale = forSale;
@@ -321,8 +323,7 @@ contract MolCommons {
 
     // NFT
     GAMMA public gamma;
-	mapping (uint => address) public auctionByTokenId;
-    
+
     // Commons coins
     LiteToken public coin;
     uint256 public airdrop = 100000000000000000000;
@@ -334,8 +335,10 @@ contract MolCommons {
     constructor(
         address payable[] memory _organizers, 
         uint8 _numConfirmationsRequired, 
-        string memory _name, 
-        string memory _symbol, 
+        string memory _nftName, 
+        string memory _nftSymbol, 
+        string memory _coinName, 
+        string memory _coinSymbol, 
         string memory _gRoyaltiesURI,
         bool _transferable
         ) public {
@@ -356,8 +359,8 @@ contract MolCommons {
         }
 
         confirmations[0] = _numConfirmationsRequired;
-        coin = new LiteToken(_name, _symbol, 18, commons, 0, 1000000000000000000000000, _transferable);
-        gamma = new GAMMA(_gRoyaltiesURI, address(coin), commons);
+        coin = new LiteToken(_coinName, _coinSymbol, 18, commons, 0, 1000000000000000000000000, _transferable);
+        gamma = new GAMMA(_nftName, _nftSymbol, _gRoyaltiesURI, address(coin), commons);
     }
     
     modifier onlyOrganizers() {
@@ -619,9 +622,8 @@ contract MolCommons {
     }
 
     // ----- Approve contract to transfer gamma
-	function createAuction(uint256 _tokenId, address _contract) public onlyCreators {
+	function approveContract(address _contract) public onlyCreators {
 	    gamma.setApprovalForAll(_contract, true);
-	    auctionByTokenId[_tokenId] = _contract;
 	}
 	
     receive() external payable {  require(msg.data.length ==0); }
