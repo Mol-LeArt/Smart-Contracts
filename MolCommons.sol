@@ -332,6 +332,8 @@ contract MolCommons {
     uint8[2] public fees = [1, 1]; // [percFeeToCreators, percFeeToContributors]
     address payable[] contributors;
 
+    // Approved contracts
+    mapping (address => bool) public isApprovedContract;
     constructor(
         address payable[] memory _organizers, 
         uint8 _numConfirmationsRequired, 
@@ -373,15 +375,20 @@ contract MolCommons {
         _;
     }
     
+    modifier onlyApprovedContracts() {
+        require(isApprovedContract[msg.sender], "Contract not approved!");
+        _;
+    }
+    
     // ******* // 
 	//  GAMMA  //
 	// ******* //
 	
-    function mint(uint256 _ethPrice, uint256 _coinPrice, string memory _tokenURI, uint8 _forSale) public onlyCreators{
+    function mint(uint256 _ethPrice, uint256 _coinPrice, string memory _tokenURI, uint8 _forSale, uint256 _airdropAmount) public onlyCreators{
         gamma.mint(_ethPrice, _coinPrice, _tokenURI, _forSale, msg.sender);
 
         // Airdrop coin
-        coin.mint(msg.sender, airdrop.mul(2)); 
+        coin.mint(msg.sender, _airdropAmount); 
     }
     
     function updateSale(uint256 _ethPrice, uint256 _coinPrice, uint256 _tokenId, uint8 _forSale) public {
@@ -417,7 +424,7 @@ contract MolCommons {
         }
     }
     
-    function purchase(uint256 _tokenId) public payable {
+    function purchase(uint256 _tokenId, uint256 _airdropAmount) public payable {
         (uint ethPrice, , uint forSale,) = gamma.getSale(_tokenId);
         require(forSale == 1, '!sale');
         
@@ -435,7 +442,7 @@ contract MolCommons {
         gamma.transfer(msg.sender, _tokenId);
 
         // Airdrop coin
-        coin.mint(msg.sender, airdrop);
+        coin.mint(msg.sender, _airdropAmount);
     }
     
     function coinPurchase(uint256 _tokenId) public payable {
@@ -624,6 +631,11 @@ contract MolCommons {
     // ----- Approve contract to transfer gamma
 	function approveContract(address _contract) public onlyCreators {
 	    gamma.setApprovalForAll(_contract, true);
+	    isApprovedContract[_contract] = true;
+	}
+	
+	function dropCoin(address _recipient, uint256 _amount) public onlyApprovedContracts {
+	    coin.mint(_recipient, _amount);
 	}
 	
     receive() external payable {  require(msg.data.length ==0); }
