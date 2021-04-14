@@ -32,11 +32,11 @@ contract MolAuction {
         gamma = _gamma;
     }
     
-    function createAuction(uint256 _tokenId, address _creator, uint256 _reserve) public {
+    function createAuction(uint256 _tokenId, uint256 _reserve) public {
         require(commons.isCreator(msg.sender), '!creator');
         (, , , address minter) = gamma.getSale(_tokenId);
         require(minter == msg.sender, '!minter');
-        auctions[_tokenId].creator = _creator;
+        auctions[_tokenId].creator = msg.sender;
         auctions[_tokenId].reserve = _reserve;
         auctions[_tokenId].startBlock = block.number;
         
@@ -83,8 +83,8 @@ contract MolAuction {
         (bool success, ) = auctions[_tokenId].creator.call{value: price}("");
         require(success, "!transfer");
         
+        gamma.updateSale(0, 0, _tokenId, 0);
         gamma.transferFrom(address(commons), buyer, _tokenId);
-        // commons.updateSale(0, 0, _tokenId, 0);
         
         emit AcceptBid(_tokenId, price, buyer, auctions[_tokenId].creator);
     }
