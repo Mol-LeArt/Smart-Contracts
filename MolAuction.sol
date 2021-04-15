@@ -4,9 +4,13 @@ pragma solidity ^0.6.0;
 import './MolCommons.sol';
 
 contract MolAuction {
+    using SafeMath for uint256;
+    
     MolCommons public commons;
     GAMMA public gamma;
     LiteToken public coin;
+    
+    uint256 fee;
     
     struct auction {
         uint256 bid;
@@ -27,15 +31,16 @@ contract MolAuction {
     event WithdrawBid(uint256 tokenId);
     event AcceptBid(uint256 tokenId, uint256 price, address indexed buyer, address indexed creator);
     
-    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin) public {
+    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin, uint256 _fee) public {
         commons = _commons;
         gamma = _gamma;
         coin = _coin;
+        fee = _fee;
     }
     
     function createAuction(uint256 _tokenId, uint256 _reserve) public {
-        (, , uint forSale,) = gamma.getSale(_tokenId);
-        require(forSale == 1, '!forSale');
+        (, , , address minter) = gamma.getSale(_tokenId);
+        require(minter == msg.sender || gamma.ownerOf(_tokenId) == msg.sender, '!minter/owner');
         auctions[_tokenId].creator = msg.sender;
         auctions[_tokenId].reserve = _reserve;
         auctions[_tokenId].startBlock = block.number;
@@ -73,7 +78,7 @@ contract MolAuction {
         emit WithdrawBid(_tokenId);
     }
     
-    function acceptBid(uint256 _tokenId, uint256 _airdropAmount) public {
+    function acceptBid(uint256 _tokenId, uint256 _airdropAmount, address payable _beneficiary) public {
         require(msg.sender == auctions[_tokenId].creator, '!creator');
         
         uint256 price = auctions[_tokenId].bid;
@@ -82,7 +87,19 @@ contract MolAuction {
         auctions[_tokenId].bid = 0;
         auctions[_tokenId].bidder = address(0);        
         
-        (bool success, ) = auctions[_tokenId].creator.call{value: price}("");
+        // Royalties 
+        uint256 royalties = price.mul(gamma.royalties()).div(100);
+        address g = gamma.gRoyaltiesByTokenId(_tokenId);
+        (bool success, ) = g.call{value: royalties}("");
+        require(success, "!transfer");
+        
+        // Fees to Commons
+        uint256 feePayment = price.mul(fee).div(100);
+        (success, ) = address(commons).call{value: feePayment}("");
+        require(success, "!transfer");
+        
+        // Specified beneficiary takes the residual
+        (success, ) = _beneficiary.call{value: price.sub(royalties).sub(feePayment)}("");
         require(success, "!transfer");
         
         gamma.updateSale(0, 0, _tokenId, 0);
