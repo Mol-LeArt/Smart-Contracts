@@ -45,13 +45,15 @@ contract MolLicense {
         coin = _coin;
     }
     
-    function createLicense(uint256 _tokenId, uint8[] memory _rights, uint256[] memory _ethPrice, uint256[] memory _coinPrice) public {
+    function createLicense(uint256 _tokenId, uint8[] memory _rights, uint256[] memory _ethPrice, uint256[] memory _coinPrice, uint256 _airdropAmount) public {
         (, , , address minter) = gamma.getSale(_tokenId);
         require(minter == msg.sender, '!minter');
         licenses[_tokenId].rights = _rights;
         licenses[_tokenId].ethPrice = _ethPrice;
         licenses[_tokenId].coinPrice = _coinPrice;
         licenses[_tokenId].startBlock = block.number;
+        
+        commons.dropCoin(msg.sender, _airdropAmount);
         
         emit CreateLicense(_tokenId, licenses[_tokenId].rights, licenses[_tokenId].ethPrice, licenses[_tokenId].coinPrice, licenses[_tokenId].startBlock);
     }
