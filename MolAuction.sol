@@ -34,9 +34,8 @@ contract MolAuction {
     }
     
     function createAuction(uint256 _tokenId, uint256 _reserve) public {
-        require(commons.isCreator(msg.sender), '!creator');
-        (, , , address minter) = gamma.getSale(_tokenId);
-        require(minter == msg.sender, '!minter');
+        (, , uint forSale,) = gamma.getSale(_tokenId);
+        require(forSale == 1, '!forSale');
         auctions[_tokenId].creator = msg.sender;
         auctions[_tokenId].reserve = _reserve;
         auctions[_tokenId].startBlock = block.number;
@@ -93,8 +92,4 @@ contract MolAuction {
         
         emit AcceptBid(_tokenId, price, buyer, auctions[_tokenId].creator);
     }
-    
-    // function airdrop(address _recipient, uint256 _amount) public {
-    //     commons.dropCoin(_recipient, _amount);
-    // }
 }
