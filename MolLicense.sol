@@ -11,6 +11,7 @@ contract MolLicense {
     LiteToken public coin;
     
     uint public licenseId;
+    uint256 public fee;
 
     struct license {
         uint8[] rights; // [digital use, print runs, media, templates, merchandise, decor, advertising]
@@ -39,15 +40,15 @@ contract MolLicense {
     event GetLicensed(uint256 licenseId, uint256 tokenId, uint8 active, uint8[] indexed rights, uint8 currency, uint256 sum, address licensee);
     event RevokeLicense(uint licenseId, string detail);
 
-    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin) public {
+    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin, uint256 _fee) public {
         commons = _commons;
         gamma = _gamma;
         coin = _coin;
+        fee = _fee;
     }
     
     function createLicense(uint256 _tokenId, uint8[] memory _rights, uint256[] memory _ethPrice, uint256[] memory _coinPrice, uint256 _airdropAmount) public {
-        (, , , address minter) = gamma.getSale(_tokenId);
-        require(minter == msg.sender, '!minter');
+        require(getMinter(_tokenId) == msg.sender, '!minter');
         licenses[_tokenId].rights = _rights;
         licenses[_tokenId].ethPrice = _ethPrice;
         licenses[_tokenId].coinPrice = _coinPrice;
@@ -59,6 +60,7 @@ contract MolLicense {
     }
     
     function updateLicense(uint256 _tokenId, uint8[] memory _rights, uint256[] memory _ethPrice, uint256[] memory _coinPrice) public {
+        require(getMinter(_tokenId) == msg.sender, '!minter');
         require(licenses[_tokenId].startBlock > 0, '!license');
         licenses[_tokenId].rights = _rights;
         licenses[_tokenId].ethPrice = _ethPrice;
@@ -89,21 +91,32 @@ contract MolLicense {
         
         if (_currency == 0) {
             payment = numOfRights.mul(licenses[_tokenId].ethPrice[_usecase]);
-            require(msg.value == payment, '!payment');
-            (bool success, ) = address(commons).call{value: payment}("");
+            require(msg.value == (payment.add(payment.mul(fee).div(100))), '!payment');
+            
+            // Commons takes a % of licensing fee
+            (bool success, ) = address(commons).call{value: payment.mul(fee).div(100)}("");
             require(success, "!transfer");
+            
+            // Minter of NFT takes licensing fee
+            (success, ) = getMinter(_tokenId).call{value: payment}("");
+            require(success, "!transfer");
+            
+            // Update license activity
             licensedActivities[licenseId].active = 1;
         } else if (_currency == 1 && coin.transferable()) {
             payment = numOfRights.mul(licenses[_tokenId].coinPrice[_usecase]);
-            (, , , address minter) = gamma.getSale(_tokenId);
-            coin.transferFrom(msg.sender, minter, payment);
+            coin.transferFrom(msg.sender, getMinter(_tokenId), payment);
+            
+            // Update license activity
             licensedActivities[licenseId].active = 1;
         } else if (_currency == 1 && !coin.transferable()) {
             payment = numOfRights.mul(licenses[_tokenId].coinPrice[_usecase]);
-            (, , , address minter) = gamma.getSale(_tokenId);
+            
             coin.updateTransferability(true);
-            coin.transferFrom(msg.sender, minter, payment);
+            coin.transferFrom(msg.sender, getMinter(_tokenId), payment);
             coin.updateTransferability(false);
+            
+            // Update license activity
             licensedActivities[licenseId].active = 1;
         } else {
             revert('Something wrong!');
@@ -121,12 +134,16 @@ contract MolLicense {
     }
 
     function revokeLicense(uint256 _tokenId, uint _licenseId, string memory _detail) public {
-        (, , , address minter) = gamma.getSale(_tokenId);
-        require(minter == msg.sender, '!minter');
+        require(getMinter(_tokenId) == msg.sender, '!minter');
     
         licensedActivities[_licenseId].active = 0;
         licensedActivities[_licenseId].detail = _detail;
         
         emit RevokeLicense(_licenseId, _detail);
+    }
+    
+    function getMinter(uint _tokenId) internal view returns (address) {
+        (, , , address minter) = gamma.getSale(_tokenId);
+        return minter;
     }
 }
