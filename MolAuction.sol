@@ -31,19 +31,31 @@ contract MolAuction {
     event WithdrawBid(uint256 tokenId);
     event AcceptBid(uint256 tokenId, uint256 price, address indexed buyer, address indexed creator);
     
-    constructor (MolCommons _commons, GAMMA _gamma, LiteToken _coin, uint256 _fee) public {
-        commons = _commons;
-        gamma = _gamma;
-        coin = _coin;
+    constructor (address payable _commons, address _gamma, address _coin, uint256 _fee) public {
+        commons = MolCommons(_commons);
+        gamma = GAMMA(_gamma);
+        coin = LiteToken(_coin);
         fee = _fee;
     }
     
-    function createAuction(uint256 _tokenId, uint256 _reserve) public {
-        (, , , address minter) = gamma.getSale(_tokenId);
-        require(minter == msg.sender || gamma.ownerOf(_tokenId) == msg.sender, '!minter/owner');
+    function startAuction(uint256 _tokenId, uint256 _reserve) internal {
         auctions[_tokenId].creator = msg.sender;
         auctions[_tokenId].reserve = _reserve;
         auctions[_tokenId].startBlock = block.number;
+    }
+    
+    function createAuction(uint256 _tokenId, uint256 _reserve) public {
+        
+        // Check ownership of NFT
+        if (gamma.ownerOf(_tokenId) == address(commons)) {
+            // Get creator of NFT
+            (, , , address minter) = gamma.getSale(_tokenId);
+            require(minter == msg.sender, '!minter');
+            startAuction(_tokenId, _reserve);
+        } else {
+            require(gamma.ownerOf(_tokenId) == msg.sender, '!owner');
+            startAuction(_tokenId, _reserve);
+        }
         
         emit CreateAuction(_tokenId, auctions[_tokenId].creator, auctions[_tokenId].reserve, auctions[_tokenId].startBlock);
     }
@@ -75,6 +87,9 @@ contract MolAuction {
         (bool success, ) = auctions[_tokenId].bidder.call{value: auctions[_tokenId].bid}("");
         require(success, "!transfer");
         
+        delete auctions[_tokenId].bid;
+        delete auctions[_tokenId].bidder;
+        
         emit WithdrawBid(_tokenId);
     }
     
@@ -102,9 +117,8 @@ contract MolAuction {
         (success, ) = _beneficiary.call{value: price.sub(royalties).sub(feePayment)}("");
         require(success, "!transfer");
         
-        gamma.updateSale(0, 0, _tokenId, 0);
-        gamma.transferFrom(address(commons), buyer, _tokenId);
-        
+        gamma.transferFrom(gamma.ownerOf(_tokenId), buyer, _tokenId);
+    
         commons.dropCoin(auctions[_tokenId].creator, _airdropAmount);
         
         emit AcceptBid(_tokenId, price, buyer, auctions[_tokenId].creator);
