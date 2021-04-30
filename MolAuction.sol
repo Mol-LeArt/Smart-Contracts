@@ -1,16 +1,54 @@
 pragma solidity ^0.6.0;
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import './MolCommons.sol';
+interface ICommons {
+    function dropCoin(address _recipient, uint256 _amount) external;
+}
+
+interface IGamma {
+    function transferFrom(address from, address to, uint256 tokenId) external;
+    function getSale(uint256 tokenId) external returns (uint, uint, uint, address);
+    function getOwnerOf(uint256 tokenId) external returns (address);
+    function getRoyalties() external returns (uint256);
+    function getRoyaltiesToken(uint256 tokenId) external returns (address);
+}
+
+library SafeMath { // arithmetic wrapper for unit under/overflow check
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        uint256 c = a + b;
+        require(c >= a);
+        return c;
+    }
+    
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b <= a);
+        uint256 c = a - b;
+        return c;
+    }
+    
+    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0) {
+            return 0;
+        }
+        uint256 c = a * b;
+        require(c / a == b);
+        return c;
+    }
+
+    function div(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b > 0);
+        uint256 c = a / b;
+        return c;
+    }
+}
 
 contract MolAuction {
     using SafeMath for uint256;
     
-    MolCommons public commons;
-    GAMMA public gamma;
-    LiteToken public coin;
-    
-    uint256 fee;
+    ICommons public commons;
+    IGamma public gamma;
+
+    uint256 public fee;
     
     struct auction {
         uint256 bid;
@@ -31,10 +69,9 @@ contract MolAuction {
     event WithdrawBid(uint256 tokenId);
     event AcceptBid(uint256 tokenId, uint256 price, address indexed buyer, address indexed creator);
     
-    constructor (address payable _commons, address _gamma, address _coin, uint256 _fee) public {
-        commons = MolCommons(_commons);
-        gamma = GAMMA(_gamma);
-        coin = LiteToken(_coin);
+    constructor (address payable _commons, address _gamma, uint256 _fee) public {
+        commons = ICommons(_commons);
+        gamma = IGamma(_gamma);
         fee = _fee;
     }
     
@@ -47,13 +84,13 @@ contract MolAuction {
     function createAuction(uint256 _tokenId, uint256 _reserve) public {
         
         // Check ownership of NFT
-        if (gamma.ownerOf(_tokenId) == address(commons)) {
+        if (gamma.getOwnerOf(_tokenId) == address(commons)) {
             // Get creator of NFT
             (, , , address minter) = gamma.getSale(_tokenId);
             require(minter == msg.sender, '!minter');
             startAuction(_tokenId, _reserve);
         } else {
-            require(gamma.ownerOf(_tokenId) == msg.sender, '!owner');
+            require(gamma.getOwnerOf(_tokenId) == msg.sender, '!owner');
             startAuction(_tokenId, _reserve);
         }
         
@@ -103,8 +140,8 @@ contract MolAuction {
         auctions[_tokenId].bidder = address(0);        
         
         // Royalties 
-        uint256 royalties = price.mul(gamma.royalties()).div(100);
-        address g = gamma.gRoyaltiesByTokenId(_tokenId);
+        uint256 royalties = price.mul(gamma.getRoyalties()).div(100);
+        address g = gamma.getRoyaltiesToken(_tokenId);
         (bool success, ) = g.call{value: royalties}("");
         require(success, "!transfer");
         
@@ -117,7 +154,7 @@ contract MolAuction {
         (success, ) = _beneficiary.call{value: price.sub(royalties).sub(feePayment)}("");
         require(success, "!transfer");
         
-        gamma.transferFrom(gamma.ownerOf(_tokenId), buyer, _tokenId);
+        gamma.transferFrom(gamma.getOwnerOf(_tokenId), buyer, _tokenId);
     
         commons.dropCoin(auctions[_tokenId].creator, _airdropAmount);
         
