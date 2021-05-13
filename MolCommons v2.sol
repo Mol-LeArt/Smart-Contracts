@@ -39,16 +39,14 @@ library Utilities {
 
 contract Controller {
     GAMMA public gamma;
-    uint bid;
-    address payable bidder;
     address[] public minters;
     address[] public controllers;
     uint8[10] public confirmationCounts; // [consensus, withdraw, change controllers]
-    
-    mapping (uint8 => mapping (address => bool)) isConfirmed;
-    mapping (address => uint8) isController;
-    mapping (address => uint8) isApprovedContract;
-    
+
+    mapping (uint8 => mapping (address => bool)) public isConfirmed;
+    mapping (address => bool) public isController;
+    mapping (address => bool) public isMinter;
+
     event Confirm(uint indexed _type, address indexed signer);
     event Revoke(uint indexed _type, address indexed signer);
     event Withdraw(uint indexed amount, address indexed signer);
@@ -56,27 +54,42 @@ contract Controller {
     event Royalties(uint royalties);
     event Fee(uint fee);
     event TokenTransfer(address to, uint tokenId);
+    event ApprovedContract(address _contract);
+    event Minters(address[] minters);
     
     constructor (
-        string memory _name, 
-        string memory _symbol, 
+        string memory _tokenName, 
+        string memory _tokenSymbol, 
         string memory _gRoyaltiesURI, 
-        address[] memory _controllers, 
-        uint8 consensusCount
+        address[] memory _controllers,
+        address[] memory _minters,
+        uint8 consensusRequired
         ) public {
         require(_controllers.length != 0, 'Controller count is 0');
-        require(consensusCount != 0, 'Consensus count is 0');
+        require(consensusRequired != 0, 'Consensus count is 0');
         
-        gamma = new GAMMA(_name, _symbol, _gRoyaltiesURI);
-        confirmationCounts[0] = consensusCount;
+        gamma = new GAMMA(_tokenName, _tokenSymbol, _gRoyaltiesURI);
         
+        controllers = _controllers;
         for (uint i = 0; i < _controllers.length; i++) {
-            isController[_controllers[i]] = 1;
+            isController[_controllers[i]] = true;
         }
+        
+        minters = _minters;
+        for (uint i = 0; i < _minters.length; i++) {
+            isMinter[_minters[i]] = true;
+        }
+        
+        confirmationCounts[0] = consensusRequired;
     }
     
-    modifier onlyController() {
-        require(isController[msg.sender] == 1, '!controller');
+    modifier onlyControllers() {
+        require(isController[msg.sender], '!controller');
+        _;
+    }
+    
+    modifier onlyMinters() {
+        require(isMinter[msg.sender], '!minter');
         _;
     }
     
@@ -88,73 +101,107 @@ contract Controller {
 	}
 	
 	function revoke(uint8 _type, address _signer) internal {
-	    require(isConfirmed[_type][_signer], 'Msg.sender already confirmed vault sale!');
+	    require(isConfirmed[_type][_signer], 'Msg.sender has not confirmed vault sale!');
 	    confirmationCounts[_type]--;
 	    isConfirmed[_type][_signer] = false;
 	    emit Revoke(_type, _signer);
 	}
 	
-	function confirmWithdraw(uint256 amount, address payable _address) external onlyController {
+	// ----- Gamma Functions
+	function mint(
+	    uint256 _ethPrice, 
+        string calldata _tokenURI, 
+        uint8 _forSale, 
+        address _minter, 
+        uint256 _split,
+        address[] memory _collaborators,
+        uint8[] memory _collaboratorsWeight
+        ) external onlyMinters {
+	    gamma.mint(
+            _ethPrice, 
+            _tokenURI, 
+            _forSale, 
+            _minter, 
+            _split,
+            _collaborators,
+            _collaboratorsWeight);
+	}
+	
+	// ----- MultiSig Functions 
+	function confirmWithdraw(uint256 amount, address payable _address) external onlyControllers {
 	    confirm(1, msg.sender);
 	    
 	    if (confirmationCounts[1] == confirmationCounts[0]) {
+	        require(address(this).balance > amount, '!amount to withdraw');
 	        (bool success, ) = _address.call{value: amount}("");
-            require(success, "!transfer");
+            require(success, "withdraw failed");
 	    }
 	    emit Withdraw(amount, msg.sender);
 	}
 	
-	function revokeWithdraw() external onlyController {
+	function revokeWithdraw() external onlyControllers {
 	    revoke(1, msg.sender);
 	}
 	
-	function confirmControllersChange(address[] memory _controllers) external onlyController {
+	function confirmControllersChange(address[] memory _controllers) external onlyControllers {
 	    confirm(2, msg.sender);
 	    
 	    if (confirmationCounts[2] == confirmationCounts[0]) {
 	        
 	        for (uint i = 0; i < controllers.length; i++){
-	            isController[controllers[i]] = 0;
+	            isController[controllers[i]] = false;
 	        }
 	        
 	        controllers = _controllers;
 	        
 	        for (uint i = 0; i < controllers.length; i++){
-	            isController[controllers[i]] = 1;
+	            isController[controllers[i]] = true;
 	        }	        
 	        
 	    }
 	    emit ChangeController(_controllers, msg.sender);
 	}
 	
-	function revokeControllersChange() external onlyController {
+	function revokeControllersChange() external onlyControllers {
 	    revoke(2, msg.sender);
 	}
 	
-	function updateMinter(address[] memory _minters) external onlyController {
-	    minters = _minters;
+	// ----- Controller Management
+	function updateConsensus(uint8 _consensusCount) external onlyControllers {
+	    confirmationCounts[0] = _consensusCount;
 	}
 	
-    function updateRoyalties(uint _royalties) external onlyController {
+	function updateMinter(address[] memory _minters) external onlyControllers {
+	    minters = _minters;
+	    
+	    for (uint i = 0; i < _minters.length; i++) {
+            isMinter[_minters[i]] = true;
+        }
+	    emit Minters(minters);
+	}
+	
+    function updateRoyalties(uint _royalties) external onlyControllers {
         gamma.updateRoyalties(_royalties);
         emit Royalties(_royalties);
     }
 
-    function updateFee(uint _fee) external onlyController {
+    function updateFee(uint _fee) external onlyControllers {
         gamma.updateFee(_fee);
         emit Fee(_fee);
     }
     
-    function transferToken(address _to, uint256 _tokenId) external onlyController {
+    function transferToken(address _to, uint256 _tokenId) external onlyControllers {
         gamma.transferToken(_to, _tokenId);
         emit TokenTransfer(_to, _tokenId);
     }
 
     // ----- Approve contract to transfer gamma
-	function approveContract(address _contract) public onlyController {
+	function approveContract(address _contract) public onlyControllers {
 	    gamma.setApprovalForAll(_contract, true);
-	    isApprovedContract[_contract] = 1;
+	    emit ApprovedContract(_contract);
 	}
+	
+	receive() external payable {  require(msg.data.length ==0); }
 }
 
 contract GAMMA {
@@ -190,6 +237,7 @@ contract GAMMA {
     struct Sale {
         uint256 ethPrice;
         uint8 forSale; // 0 = !sale, 1 = sale
+        address minter;
         uint256 split;
         address[] collaborators;
         uint8[] collaboratorsWeight;
@@ -209,14 +257,15 @@ contract GAMMA {
         getApproved[tokenId] = spender;
         emit Approval(msg.sender, spender, tokenId); 
     }
-    function mint(uint256 _ethPrice, 
+    function mint(
+        uint256 _ethPrice, 
         string calldata _tokenURI, 
         uint8 _forSale, 
         address _minter, 
         uint256 _split,
         address[] memory _collaborators,
         uint8[] memory _collaboratorsWeight
-        ) external { 
+        ) external onlyController { 
         totalSupply++;
         require(_forSale <= 1, "!forSale value");
         require(totalSupply <= GAMMA_MAX, "maxed");
@@ -227,6 +276,7 @@ contract GAMMA {
         
         sale[tokenId].ethPrice = _ethPrice;
         sale[tokenId].forSale = _forSale;
+        sale[tokenId].minter = _minter;
         sale[tokenId].split = _split;
         sale[tokenId].collaborators = _collaborators;
         sale[tokenId].collaboratorsWeight = _collaboratorsWeight;
@@ -242,7 +292,7 @@ contract GAMMA {
         
         emit gRoyaltiesMinted(address(g));
         emit Transfer(address(0), _minter, tokenId);
-        emit Mint(tokenId, sale[tokenId].ethPrice, tokenURI[tokenId], sale[tokenId].forSale, _minter, sale[tokenId].split, sale[tokenId].collaborators, sale[tokenId].collaboratorsWeight);
+        emit Mint(tokenId, sale[tokenId].ethPrice, tokenURI[tokenId], sale[tokenId].forSale, sale[tokenId].minter, sale[tokenId].split, sale[tokenId].collaborators, sale[tokenId].collaboratorsWeight);
     }
     function distributeCollabSplit(uint256 _tokenId, uint256 _ethPrice) private {
         require(sale[_tokenId].collaborators.length == sale[_tokenId].collaboratorsWeight.length, "!collaborator/weight");
@@ -251,7 +301,7 @@ contract GAMMA {
             uint256 eachPayout;
             eachPayout = totalPayout.mul(sale[_tokenId].collaboratorsWeight[i]);
             (bool success, ) = address(uint160(sale[_tokenId].collaborators[i])).call{value: eachPayout}("");
-            require(success, "!transfer");
+            require(success, "!primary collab split transfer");
         }
     }
     function purchase(uint256 tokenId) payable external {
@@ -262,7 +312,7 @@ contract GAMMA {
             // Tx fee
             uint256 payout = fee.mul(sale[tokenId].ethPrice).div(100);
             (bool success, ) = controller.call{value: payout}("");
-            require(success, "!transfer");
+            require(success, "!primary fee transfer");
             
             // Collab payout
             uint256 collabPayout = sale[tokenId].split.mul(sale[tokenId].ethPrice).div(100);
@@ -270,17 +320,17 @@ contract GAMMA {
             
             // Residual payout
             (success, ) = ownerOf[tokenId].call{value: sale[tokenId].ethPrice.sub(payout).sub(collabPayout)}("");
-            require(success, "!transfer");
+            require(success, "!primary residual transfer");
             sale[tokenId].didPrimary = 1;
         } else {
             // Royalties payout
             uint256 _royalties = sale[tokenId].ethPrice.mul(royalties).div(100);
             (bool success, ) = gRoyaltiesByTokenId[tokenId].call{value: _royalties}("");
-            require(success, "!transfer royalties from GAMMA to gRoyalties");
+            require(success, "!secondary transfer royalties from GAMMA to gRoyalties");
             
             // Residual payout
             (success, ) = ownerOf[tokenId].call{value: sale[tokenId].ethPrice.sub(_royalties)}("");
-            require(success, "!transfer");            
+            require(success, "!secondary residual transfer");            
         }
         _transfer(ownerOf[tokenId], msg.sender, tokenId);
         
@@ -313,6 +363,16 @@ contract GAMMA {
         sale[_tokenId].ethPrice = _ethPrice;
         sale[_tokenId].forSale = _forSale;
         emit UpdateSale(_forSale, _ethPrice, _tokenId);
+    }
+    function getSale(uint256 tokenId) public view returns (uint, uint, address, uint, address[] memory, uint8[] memory, uint) {
+        return (
+            sale[tokenId].ethPrice, 
+            sale[tokenId].forSale, 
+            sale[tokenId].minter,
+            sale[tokenId].split,
+            sale[tokenId].collaborators,
+            sale[tokenId].collaboratorsWeight,
+            sale[tokenId].didPrimary);
     }
     function getAllTokenURI() public view returns (string[] memory){
         string[] memory tokenURIs = new string[](totalSupply);
