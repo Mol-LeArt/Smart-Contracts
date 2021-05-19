@@ -31,6 +31,11 @@ library SafeMath { // arithmetic wrapper for unit under/overflow check
     }
 }
 
+interface IERC20 {
+    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+}
+
 library Utilities {
     function append(string memory a, string memory b) internal pure returns (string memory) {
         return string(abi.encodePacked(a, b));
@@ -41,7 +46,7 @@ contract Controller {
     GAMMA public gamma;
     address[] public minters;
     address[] public controllers;
-    uint8[10] public confirmationCounts; // [consensus, withdraw, change controllers]
+    uint8[3] public confirmationCounts; // [consensus, withdraw, change controllers]
 
     mapping (uint8 => mapping (address => bool)) public isConfirmed;
     mapping (address => bool) public isController;
@@ -53,7 +58,6 @@ contract Controller {
     event ChangeController(address[] indexed _controllers, address indexed signer);
     event Royalties(uint royalties);
     event Fee(uint fee);
-    event TokenTransfer(address to, uint tokenId);
     event ApprovedContract(address _contract);
     event Minters(address[] minters);
     
@@ -128,42 +132,45 @@ contract Controller {
 	}
 	
 	// ----- MultiSig Functions 
-	function confirmWithdraw(uint256 amount, address payable _address) external onlyControllers {
+	function confirmWithdraw() external onlyControllers {
 	    confirm(1, msg.sender);
-	    
-	    if (confirmationCounts[1] == confirmationCounts[0]) {
-	        require(address(this).balance > amount, '!amount to withdraw');
-	        (bool success, ) = _address.call{value: amount}("");
-            require(success, "withdraw failed");
-	    }
-	    emit Withdraw(amount, msg.sender);
 	}
 	
 	function revokeWithdraw() external onlyControllers {
 	    revoke(1, msg.sender);
 	}
 	
-	function confirmControllersChange(address[] memory _controllers) external onlyControllers {
+	function executeWithdraw(uint256 amount, address payable _address) external onlyControllers {
+	    require(confirmationCounts[1] == confirmationCounts[0], '!consensus to withdraw');
+        require(address(this).balance > amount, '!amount to withdraw');
+        (bool success, ) = _address.call{value: amount}("");
+        require(success, "withdraw failed");
+	    emit Withdraw(amount, msg.sender);
+	}
+	
+	function confirmControllersChange() external onlyControllers {
 	    confirm(2, msg.sender);
-	    
-	    if (confirmationCounts[2] == confirmationCounts[0]) {
-	        
-	        for (uint i = 0; i < controllers.length; i++){
-	            isController[controllers[i]] = false;
-	        }
-	        
-	        controllers = _controllers;
-	        
-	        for (uint i = 0; i < controllers.length; i++){
-	            isController[controllers[i]] = true;
-	        }	        
-	        
-	    }
-	    emit ChangeController(_controllers, msg.sender);
 	}
 	
 	function revokeControllersChange() external onlyControllers {
 	    revoke(2, msg.sender);
+	}
+	
+	function executeControllerChange(address[] memory _controllers) external onlyControllers {
+	    require(confirmationCounts[2] == confirmationCounts[0], '!consensus to change controllers');
+	    require(_controllers.length > 0,'!_controllers');
+	        
+        for (uint i = 0; i < controllers.length; i++){
+            isController[controllers[i]] = false;
+        }
+	        
+        controllers = _controllers;
+       
+        for (uint i = 0; i < controllers.length; i++){
+            isController[controllers[i]] = true;
+        }	        
+	        
+	    emit ChangeController(_controllers, msg.sender);
 	}
 	
 	// ----- Controller Management
@@ -189,10 +196,9 @@ contract Controller {
         gamma.updateFee(_fee);
         emit Fee(_fee);
     }
-    
-    function transferToken(address _to, uint256 _tokenId) external onlyControllers {
-        gamma.transferToken(_to, _tokenId);
-        emit TokenTransfer(_to, _tokenId);
+  
+    function airdrop(address coin, address to, uint256 amount) external onlyControllers {
+        IERC20(coin).transferFrom(msg.sender, to, amount);
     }
 
     // ----- Approve contract to transfer gamma
@@ -229,7 +235,6 @@ contract GAMMA {
     event ApprovalForAll(address indexed holder, address indexed operator, bool approved);
     event gRoyaltiesMinted(address indexed contractAddress);
     event UpdateController(address indexed controller);
-    event UpdateFee(uint256 indexed fee);
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     event UpdateSale(uint8 forSale, uint256 indexed ethPrice, uint256 indexed tokenId);
     event Purchase(uint256 indexed tokenId, uint256 indexed ethPrice);
@@ -389,12 +394,8 @@ contract GAMMA {
         require(msg.sender == controller, "!controller");
         _;
     }
-    function transferToken(address _to, uint256 _tokenId) public onlyController {
-        _transfer(ownerOf[_tokenId], _to, _tokenId);
-    }
     function updateFee(uint256 _fee) public onlyController {
         fee = _fee;
-        emit UpdateFee(fee);
     }
     function updateRoyalties(uint256 _royalties) public onlyController {
         royalties = _royalties;
