@@ -44,8 +44,10 @@ library Utilities {
 
 contract Controller {
     GAMMA public gamma;
+    address payable public fundRecipient;
     address[] public minters;
     address[] public controllers;
+    address[] public proposedControllers;
     uint8[3] public confirmationCounts; // [consensus, withdraw, change controllers]
 
     mapping (uint8 => mapping (address => bool)) public isConfirmed;
@@ -98,20 +100,20 @@ contract Controller {
     }
     
     function confirm(uint8 _type, address _signer) internal {
-        require(!isConfirmed[_type][_signer], 'Msg.sender already confirmed vault sale!');
+        require(!isConfirmed[_type][_signer], 'Proposal already confirmed!');
 	    confirmationCounts[_type]++;
 	    isConfirmed[_type][_signer] = true;
 	    emit Confirm(_type, _signer);
 	}
 	
 	function revoke(uint8 _type, address _signer) internal {
-	    require(isConfirmed[_type][_signer], 'Msg.sender has not confirmed vault sale!');
+	    require(isConfirmed[_type][_signer], 'Proposal not yet confirmed!');
 	    confirmationCounts[_type]--;
 	    isConfirmed[_type][_signer] = false;
 	    emit Revoke(_type, _signer);
 	}
 	
-	// ----- Gamma Functions
+	// ----- Mint Gamma
 	function mint(
 	    uint256 _ethPrice, 
         string calldata _tokenURI, 
@@ -131,46 +133,62 @@ contract Controller {
             _collaboratorsWeight);
 	}
 	
-	// ----- MultiSig Functions 
+	// ----- MultiSig Withdraw
+	function setRecipient(address payable _fundRecipient) external onlyControllers {
+	    fundRecipient = _fundRecipient;
+	}
+	
 	function confirmWithdraw() external onlyControllers {
+	    require(fundRecipient != address(0),'!fundRecipient');
 	    confirm(1, msg.sender);
 	}
 	
-	function revokeWithdraw() external onlyControllers {
+	function cancelWithdraw() external onlyControllers {
+	    require(isConfirmed[1][msg.sender], '!confirmed');
 	    revoke(1, msg.sender);
 	}
 	
-	function executeWithdraw(uint256 amount, address payable _address) external onlyControllers {
-	    require(confirmationCounts[1] == confirmationCounts[0], '!consensus to withdraw');
-        require(address(this).balance > amount, '!amount to withdraw');
-        (bool success, ) = _address.call{value: amount}("");
+	function executeWithdraw() external onlyControllers {
+	    require(confirmationCounts[1] >= confirmationCounts[0], '!consensus to withdraw');
+        require(address(this).balance >= 0, '!amount to withdraw');
+        (bool success, ) = fundRecipient.call{value: address(this).balance}("");
         require(success, "withdraw failed");
-	    emit Withdraw(amount, msg.sender);
+        delete(fundRecipient);
+	    emit Withdraw(address(this).balance, msg.sender);
 	}
 	
-	function confirmControllersChange() external onlyControllers {
+	// ----- MultiSig Change Controllers
+	function proposeControllers(address[] memory _controllers) external onlyControllers {
+	    require(_controllers.length > 0,'!_controllers');
+	    proposedControllers = _controllers;
+	}
+	
+	function confirmProposedControllers() external onlyControllers {
+	    require(proposedControllers.length > 0,'!_controllers');
 	    confirm(2, msg.sender);
 	}
 	
-	function revokeControllersChange() external onlyControllers {
+	function cancelProposedControllers() external onlyControllers {
+	    require(isConfirmed[2][msg.sender], '!confirmed');
 	    revoke(2, msg.sender);
 	}
 	
-	function executeControllerChange(address[] memory _controllers) external onlyControllers {
-	    require(confirmationCounts[2] == confirmationCounts[0], '!consensus to change controllers');
-	    require(_controllers.length > 0,'!_controllers');
+	function executeProposedControllers() external onlyControllers {
+	    require(confirmationCounts[2] >= confirmationCounts[0], '!consensus to change controllers');
+	    
 	        
         for (uint i = 0; i < controllers.length; i++){
             isController[controllers[i]] = false;
         }
 	        
-        controllers = _controllers;
-       
+        controllers = proposedControllers;
+        delete(proposedControllers);
+        
         for (uint i = 0; i < controllers.length; i++){
             isController[controllers[i]] = true;
         }	        
 	        
-	    emit ChangeController(_controllers, msg.sender);
+	    emit ChangeController(proposedControllers, msg.sender);
 	}
 	
 	// ----- Controller Management
@@ -321,7 +339,9 @@ contract GAMMA {
             
             // Collab payout
             uint256 collabPayout = sale[tokenId].split.mul(sale[tokenId].ethPrice).div(100);
-            distributeCollabSplit(tokenId, collabPayout);
+            if (collabPayout > 0) {
+                distributeCollabSplit(tokenId, collabPayout);   
+            }
             
             // Residual payout
             (success, ) = ownerOf[tokenId].call{value: sale[tokenId].ethPrice.sub(payout).sub(collabPayout)}("");
